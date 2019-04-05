@@ -69,7 +69,8 @@ class Network(torch.nn.Module):
         acc = np.mean(list(y_pred_batch_int.eq(y_batch.data).cpu()))  # compute accuracy
         return acc
 
-    def save_train_epoch_results(self, batch_statistics,train_file_path):
+    @staticmethod
+    def save_train_epoch_results(batch_statistics,train_file_path):
         statistics_to_save = {"train_acc":0, "train_loss":0, "epoch_train_time":0,"current_epoch":0}
         statistics_to_save["current_epoch"] = batch_statistics["current_epoch"]
         statistics_to_save["epoch_train_time"] = batch_statistics["epoch_train_time"]
@@ -86,7 +87,7 @@ class Network(torch.nn.Module):
     def train_evaluate(self, train_set, valid_full, test_full, num_epochs,
                        optimizer, results_dir,
                        attack=None,
-                       scheduler=None, minority_class=3):
+                       scheduler=None):
 
         # SET OUTPUT PATH
         if not os.path.exists(results_dir): os.makedirs(results_dir)
@@ -100,8 +101,6 @@ class Network(torch.nn.Module):
 
         # SET LOGS
         logger = Logger(stream=sys.stderr, disable=False)
-        logger.print('starting adversarial training procedure')
-        logger.print('attack used: {}'.format(type(attack) if attack is not None else 'None'))
 
         self.num_epochs = num_epochs
         self.optimizer = optimizer
@@ -117,8 +116,7 @@ class Network(torch.nn.Module):
                     x = x.to(device=self.device)
                     y = y.to(device=self.device)
 
-                    output = self.train_iteration(x, y, minority_class=minority_class)
-
+                    output = self.train_iteration(x, y)
                     # SAVE BATCH STATS
                     for key, value, in output.items():
                         batch_statistics[key].append(output[key].item())
@@ -134,8 +132,8 @@ class Network(torch.nn.Module):
             for k, v in batch_statistics.items():
                 epoch_stats[k] = np.around(np.mean(v), decimals=4)
             return epoch_stats
-    
-        def test_epoch(current_epoch):  
+
+        def test_epoch(current_epoch):
             batch_statistics = defaultdict(lambda: [])
 
             with tqdm(total=len(valid_full)) as pbar_val:
@@ -143,8 +141,7 @@ class Network(torch.nn.Module):
                     x_all, y_all = batch
                     x_all = x_all.to(device=self.device)
                     y_all = y_all.to(device=self.device)
-
-                    output = self.valid_iteration('valid', x_all, y_all,  minority_class=minority_class)
+                    output = self.valid_iteration('valid', x_all, y_all)
 
                     # SAVE BATCH STATS
                     for key, value, in output.items():
@@ -160,7 +157,7 @@ class Network(torch.nn.Module):
                     x_all = x_all.to(device=self.device)
                     y_all = y_all.to(device=self.device)
 
-                    output = self.valid_iteration('test', x_all, y_all, minority_class=minority_class)
+                    output = self.valid_iteration('test', x_all, y_all)
 
                     # SAVE BATCH STATS
                     for key, value, in output.items():
@@ -179,11 +176,7 @@ class Network(torch.nn.Module):
             test_statistics_to_save = epoch_stats
             return test_statistics_to_save
 
-        bpm_overall = defaultdict(lambda: 0)
-        bpm_minority = defaultdict(lambda: 0)
-        bpm_overall['title'] = 'Best Performing Model Overall'
-        bpm_minority['title'] = 'Best Performing Model Minority Class'
-
+        bpm = defaultdict(lambda: 0)
         torch.cuda.empty_cache()
         for current_epoch in range(self.num_epochs):
             train_statistics_to_save = train_epoch(current_epoch)
@@ -203,13 +196,11 @@ class Network(torch.nn.Module):
             logger.print(train_statistics_to_save)
 
             # save bpm statistics
-            if test_statistics_to_save['valid_acc'] > bpm_overall['valid_acc']:
+            if test_statistics_to_save['valid_acc'] > bpm['valid_acc']:
                 for key, value in test_statistics_to_save.items():
-                    bpm_overall[key] = value
-
-            if test_statistics_to_save['valid_acc_class_minority'] > bpm_minority['valid_acc_class_minority']:
-                for key, value in test_statistics_to_save.items():
-                    bpm_minority[key] = value
+                    bpm[key] = value
+                for key, value in train_statistics_to_save.items():
+                    bpm[key] = value
 
             storage_utils.save_statistics(test_statistics_to_save, file_path=valid_and_test_results_path)
             logger.print(test_statistics_to_save)
@@ -217,7 +208,7 @@ class Network(torch.nn.Module):
             if scheduler is not None: scheduler.step()
             for param_group in self.optimizer.param_groups:
                 logger.print('learning rate: {}'.format(param_group['lr']))
-        return bpm_overall, bpm_minority
+        return bpm
 
     def get_class_stats_helper(self, y_all, y_pred_all, criterion, class_idx):
         # find class specific stats
@@ -237,22 +228,19 @@ class Network(torch.nn.Module):
             acc_min = self.get_acc_batch(y_min, y_pred_min)
         return loss_min, acc_min
 
-    def get_class_stats(self, type_key, output, minority_class, y_all, y_pred_all, criterion):
-        for class_idx in range(10):
+    def get_class_stats(self, type_key, output, y_all, y_pred_all, criterion, class_range=3):
+        for class_idx in range(class_range):
             loss_min, acc_min = self.get_class_stats_helper(y_all, y_pred_all, criterion, class_idx)
             if acc_min is None or loss_min is None:
                 continue
-            if class_idx == minority_class:
-                output[type_key + '_acc_class_minority'] = acc_min
-                output[type_key + '_loss_class_minority'] = loss_min
-            else:
-                output[type_key + '_acc_class_' + str(class_idx)] = acc_min
-                output[type_key + '_loss_class_' + str(class_idx)] = loss_min
 
-    def train_iteration(self, x_all, y_all, y_min_map=None, y_min_adv_map=None, minority_class=3):
+            output[type_key + '_acc_class_' + str(class_idx)] = acc_min
+            output[type_key + '_loss_class_' + str(class_idx)] = loss_min
+
+    def train_iteration(self, x_all, y_all):
         self.train()
         criterion = nn.CrossEntropyLoss().cuda()
-
+        x_all = x_all.float()
         y_pred_all = self.forward(x_all)
         loss_all = criterion(input=y_pred_all, target=y_all.view(-1))
         self.optimizer.zero_grad()
@@ -261,20 +249,11 @@ class Network(torch.nn.Module):
         acc_all = self.get_acc_batch(y_all, y_pred_all)
 
         output = {'train_loss': loss_all.data, 'train_acc': acc_all}
-        self.get_class_stats('train', output, minority_class, y_all, y_pred_all, criterion)
-
-        # # ADVERSARIAL STATS
-        # if y_min_map is not None:
-        #     y_adv_min = y_all[y_min_adv_map[0]:y_min_adv_map[1]]
-        #     y_pred_adv_min = y_pred_all[y_min_adv_map[0]:y_min_adv_map[1]]
-        #
-        #     loss_min_adv = criterion(input=y_pred_adv_min, target=y_adv_min.view(-1))
-        #     output['loss_adversarial'] = loss_min_adv.data if loss_min_adv is not None else None
-        #     output['acc_adversarial'] = self.get_acc_batch(y_adv_min, y_pred_adv_min)
+        self.get_class_stats('train', output, y_all, y_pred_all, criterion)
 
         return output
 
-    def valid_iteration(self, type_key, x_all, y_all, minority_class=3):
+    def valid_iteration(self, type_key, x_all, y_all):
         with torch.no_grad():
             self.eval() # should be eval but something BN - todo: change later if no problems.
             '''
@@ -282,11 +261,12 @@ class Network(torch.nn.Module):
             Evaluating accuracy on min examples 
             '''
             criterion = nn.CrossEntropyLoss().cuda()
+            x_all = x_all.float()
             y_pred_all = self.forward(x_all)
             loss_all = criterion(input=y_pred_all, target=y_all.view(-1))
             acc_all = self.get_acc_batch(y_all, y_pred_all)
             output = {type_key + '_loss': loss_all.data, type_key + '_acc': acc_all}
-            self.get_class_stats(type_key, output, minority_class, y_all, y_pred_all, criterion)
+            self.get_class_stats(type_key, output, y_all, y_pred_all, criterion)
         return output
 
     def save_model(self, model_save_dir,model_save_name):

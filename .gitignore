@@ -63,3 +63,5 @@ target/
 # CUSTOM
 
 data/
+scripts*
+*.csv
