@@ -46,11 +46,10 @@ def prepare_output_file(filename, output=None, clean_flag=False):
     else:
         if output is None:
             raise ValueError("Please specify output to write to output file.")
+
         with open(filename, 'w') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=list(output.keys()))
-            if not file_exists:
-                writer.writeheader()
-
+            writer.writeheader()
             if VERBOSE:
                 print("Writing to file {0}".format(filename))
                 print(output)
@@ -59,8 +58,7 @@ def prepare_output_file(filename, output=None, clean_flag=False):
 
 def extract_data():
     # DATA
-    data_saved_flag = True
-    if data_saved_flag:
+    if True:
         p = TextDataProvider()
         x_train, y_train, x_val, y_val, x_test, y_test = p.extract('data/80k_tweets.json', 'data/labels.csv')
         d = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test, 'y_test': y_test}
@@ -68,13 +66,13 @@ def extract_data():
             path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(key))
             with open(path, 'wb') as f:
                 pickle.dump(value, f)
-    else:
-        res = []
-        for val in ['x_train', 'y_train', 'x_val', 'y_val', 'x_test', 'y_test']:
-            path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(val))
-            with open(path, 'rb') as f:
-                res.append(pickle.load(f))
-        x_train, y_train, x_val, y_val, x_test, y_test = res
+    # else:
+    #     res = []
+    #     for val in ['x_train', 'y_train', 'x_val', 'y_val', 'x_test', 'y_test']:
+    #         path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(val))
+    #         with open(path, 'rb') as f:
+    #             res.append(pickle.load(f))
+    #     x_train, y_train, x_val, y_val, x_test, y_test = res
     if VERBOSE:
         print("SIZES: training set: {}, validation set: {}, test set: {}".format(len(x_train), len(x_val), len(x_test)))
     return x_train, y_train, x_val, y_val, x_test, y_test

@@ -196,10 +196,9 @@ class TextDataProvider(object):
         self.labels = None
         self.vocabulary = set()
 
-    def _split_data(self):
-        if self.tweets is None or self.labels is None:
-            raise ValueError("Please extract from data source to populate tweets.")
-        x_train, x_test, y_train, y_test = train_test_split(self.tweets, self.labels, test_size=.2, random_state=1)
+    @staticmethod
+    def _split_data(x, y):
+        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.2, random_state=1)
         x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=1)
         return x_train, y_train, x_val, y_val, x_test, y_test
 
@@ -236,8 +235,6 @@ class TextDataProvider(object):
                 if subset is not None and line_count >= subset:
                     break
                 obj = json.loads(line)
-
-
                 text_raw = obj['text']
                 text, tokens = self.process_text(text_raw)
                 self.vocabulary.update(tokens)
@@ -259,22 +256,20 @@ class TextDataProvider(object):
         print("Average {} is {}".format('favorite count', int(np.mean(favorite_count))))
         print("Average {} is {}".format('retweet count', int(np.mean(retweet_count))))
         print("Average {} is {}".format('follower count', int(np.median(followers_count))))
-        self.tweets = tweets
-        self.labels = labels
         return tweets, labels
 
     @staticmethod
     def _random_embedding():
         return np.random.normal(scale=0.6, size=(EMBED_DIM,))
 
-    def _split_corpus(self):
-        x_train, y_train, x_val, y_val, x_test, y_test = self._split_data()
+    def _split_corpus(self, x, y):
+        x_train, y_train, x_val, y_val, x_test, y_test = self._split_data(x, y)
         return x_train + x_val
 
     def extract(self, filename_data, filename_labels, subset=None):
         data = self._extract_labels(filename_labels)
-        _, _ = self._extract_tweets(data, filename_data, subset)
-        tweets_corpus = self._split_corpus()
+        raw_tweets, labels = self._extract_tweets(data, filename_data, subset)
+        tweets_corpus = self._split_corpus(raw_tweets, labels)
         print("Creating word2vec model...")
         model = word2vec.Word2Vec(sentences=tweets_corpus, size=EMBED_DIM)
         model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
@@ -282,8 +277,10 @@ class TextDataProvider(object):
         word_vector_dict = model.wv
 
         tweets = []
-        for i, tweet in enumerate(tweets_corpus):
+        for i, tweet in enumerate(raw_tweets):
             embedded_tweet = []
+
+            # trim if too large
             if len(tweet) >= TWEET_SIZE:
                 tweet = tweet[:TWEET_SIZE]
 
@@ -299,7 +296,7 @@ class TextDataProvider(object):
             assert len(embedded_tweet) == TWEET_SIZE
             tweets.append(embedded_tweet)
 
-        return self._split_data()
+        return self._split_data(tweets, labels)
 
     # def visualize(self, filename_plots='plots/tweet_distribution'):
     #     if self.labels is None:

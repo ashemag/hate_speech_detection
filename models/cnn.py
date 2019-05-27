@@ -49,6 +49,9 @@ class CNN(Network):
             out = F.relu(out)  # apply relu
             print(out.shape)
 
+            # APPLY DROP OUT
+            out = self.drop(out)
+
             if self.dim_reduction_type == 'strided_convolution':  # if dim reduction is strided conv, then add a strided conv
                 self.layer_dict['dim_reduction_strided_conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
                                                                                        kernel_size=3,

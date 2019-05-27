@@ -1,7 +1,9 @@
+"""
+Unit tests
+"""
+
 import unittest
-
 from gensim.models import word2vec
-
 from baseline_experiment import extract_data
 from data_provider import TextDataProvider
 
@@ -11,6 +13,7 @@ DEFAULT_SEED = 28
 
 class Testing(unittest.TestCase):
     def test_data(self):
+        print("\n=== Data Tests ===\n")
         x_train, y_train, x_val, y_val, x_test, y_test = extract_data()
         print(type(x_train))
         print(len(x_train + x_val))
@@ -18,6 +21,7 @@ class Testing(unittest.TestCase):
         print("SIZES: training set: {}, validation set: {}, test set: {}".format(len(x_train), len(x_val), len(x_test)))
 
     def test_vocabulary(self):
+        print("\n=== Vocabulary Tests ===\n")
         p = TextDataProvider()
         data = p._extract_labels('data/labels.csv')
         _, _ = p._extract_tweets(data, 'data/80k_tweets.json', None)
