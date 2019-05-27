@@ -8,6 +8,13 @@ from collections import OrderedDict
 import torch.nn as nn
 from collections import defaultdict
 import pickle
+from sklearn.metrics import f1_score
+
+# remove warning for f-score, precision, recall
+def warn(*args, **kwargs):
+    pass
+import warnings
+warnings.warn = warn
 
 
 class Logger(object):
@@ -35,6 +42,7 @@ class Network(torch.nn.Module):
         self.train_file_path = None
         self.cross_entropy = None
         self.scheduler = None
+        self.gpu = True
 
         logger = Logger(stream=sys.stderr)
         logger.disable = False # if disabled does not print info messages.
@@ -43,7 +51,7 @@ class Network(torch.nn.Module):
         if not torch.cuda.is_available():
             print("GPU IS NOT AVAILABLE")
             self.device = torch.device('cpu')  # sets the device to be CPU
-
+            self.gpu = False
         if ',' in gpu_ids:
             self.device = [torch.device('cuda:{}'.format(idx)) for idx in gpu_ids.split(",")]
         else:
@@ -86,6 +94,7 @@ class Network(torch.nn.Module):
 
     def train_evaluate(self, train_set, valid_full, test_full, num_epochs,
                        optimizer, results_dir,
+                       label_mapping=None,
                        attack=None,
                        scheduler=None):
 
@@ -101,7 +110,7 @@ class Network(torch.nn.Module):
 
         # SET LOGS
         logger = Logger(stream=sys.stderr, disable=False)
-
+        gpu = self.gpu
         self.num_epochs = num_epochs
         self.optimizer = optimizer
         self.cross_entropy = torch.nn.CrossEntropyLoss()
@@ -113,10 +122,11 @@ class Network(torch.nn.Module):
             with tqdm(total=len(train_set)) as pbar_val:
                 for i, batch in enumerate(train_set):
                     x, y = batch
-                    x = x.to(device=self.device)
-                    y = y.to(device=self.device)
+                    if gpu:
+                        x = x.to(device=self.device)
+                        y = y.to(device=self.device)
 
-                    output = self.train_iteration(x, y)
+                    output = self.train_iteration(x, y, label_mapping)
                     # SAVE BATCH STATS
                     for key, value, in output.items():
                         batch_statistics[key].append(output[key].item())
@@ -139,9 +149,10 @@ class Network(torch.nn.Module):
             with tqdm(total=len(valid_full)) as pbar_val:
                 for i, batch in enumerate(valid_full):
                     x_all, y_all = batch
-                    x_all = x_all.to(device=self.device)
-                    y_all = y_all.to(device=self.device)
-                    output = self.valid_iteration('valid', x_all, y_all)
+                    if gpu:
+                        x_all = x_all.to(device=self.device)
+                        y_all = y_all.to(device=self.device)
+                    output = self.valid_iteration('valid', x_all, y_all, label_mapping)
 
                     # SAVE BATCH STATS
                     for key, value, in output.items():
@@ -154,10 +165,11 @@ class Network(torch.nn.Module):
             with tqdm(total=len(test_full)) as pbar_test:
                 for i, batch in enumerate(test_full):
                     x_all, y_all = batch
-                    x_all = x_all.to(device=self.device)
-                    y_all = y_all.to(device=self.device)
+                    if gpu:
+                        x_all = x_all.to(device=self.device)
+                        y_all = y_all.to(device=self.device)
 
-                    output = self.valid_iteration('test', x_all, y_all)
+                    output = self.valid_iteration('test', x_all, y_all, label_mapping)
 
                     # SAVE BATCH STATS
                     for key, value, in output.items():
@@ -192,7 +204,7 @@ class Network(torch.nn.Module):
                     pickle.dump(advs_images_dict, f)
 
             # save model.
-            self.save_model(model_save_dir, model_save_name='model_epoch_{}'.format(str(current_epoch)))
+            #self.save_model(model_save_dir, model_save_name='model_epoch_{}'.format(str(current_epoch)))
             logger.print(train_statistics_to_save)
 
             # save bpm statistics
@@ -228,16 +240,20 @@ class Network(torch.nn.Module):
             acc_min = self.get_acc_batch(y_min, y_pred_min)
         return loss_min, acc_min
 
-    def get_class_stats(self, type_key, output, y_all, y_pred_all, criterion, class_range=3):
+    def get_class_stats(self, type_key, output, y_all, y_pred_all, criterion, label_mapping, class_range=4):
         for class_idx in range(class_range):
             loss_min, acc_min = self.get_class_stats_helper(y_all, y_pred_all, criterion, class_idx)
             if acc_min is None or loss_min is None:
                 continue
 
-            output[type_key + '_acc_class_' + str(class_idx)] = acc_min
-            output[type_key + '_loss_class_' + str(class_idx)] = loss_min
+            class_key = label_mapping[class_idx] if label_mapping is not None else str(class_idx)
 
-    def train_iteration(self, x_all, y_all):
+            output[type_key + '_acc_class_' + class_key] = acc_min
+            output[type_key + '_loss_class_' + class_key] = loss_min
+            # _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
+            # output[type_key + '_f_score_' + class_key] = f1_score(y_all.cpu().detach().numpy(), y_pred_all_int.cpu().detach().numpy(), average="macro")
+
+    def train_iteration(self, x_all, y_all, label_mapping):
         self.train()
         criterion = nn.CrossEntropyLoss().cuda()
         x_all = x_all.float()
@@ -249,11 +265,18 @@ class Network(torch.nn.Module):
         acc_all = self.get_acc_batch(y_all, y_pred_all)
 
         output = {'train_loss': loss_all.data, 'train_acc': acc_all}
-        self.get_class_stats('train', output, y_all, y_pred_all, criterion)
-
+        _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
+        scores = f1_score(
+            y_all.cpu().detach().numpy(),
+            y_pred_all_int.cpu().detach().numpy(),
+            average=None
+        )
+        for i in range(len(scores)):
+            output['train_f_score' + '_' + label_mapping[i]] = scores[i]
+        self.get_class_stats('train', output, y_all, y_pred_all, criterion, label_mapping)
         return output
 
-    def valid_iteration(self, type_key, x_all, y_all):
+    def valid_iteration(self, type_key, x_all, y_all, label_mapping):
         with torch.no_grad():
             self.eval() # should be eval but something BN - todo: change later if no problems.
             '''
@@ -266,7 +289,16 @@ class Network(torch.nn.Module):
             loss_all = criterion(input=y_pred_all, target=y_all.view(-1))
             acc_all = self.get_acc_batch(y_all, y_pred_all)
             output = {type_key + '_loss': loss_all.data, type_key + '_acc': acc_all}
-            self.get_class_stats(type_key, output, y_all, y_pred_all, criterion)
+
+            _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
+            scores = f1_score(
+                y_all.cpu().detach().numpy(),
+                y_pred_all_int.cpu().detach().numpy(),
+                average=None
+            )
+            for i in range(len(scores)):
+                output[type_key + '_f_score' + '_' + label_mapping[i]] = scores[i]
+            self.get_class_stats(type_key, output, y_all, y_pred_all, criterion, label_mapping)
         return output
 
     def save_model(self, model_save_dir,model_save_name):

@@ -15,6 +15,8 @@ import torch.utils.data as data
 
 EMBED_DIM = 200
 DEFAULT_SEED = 28
+TWEET_SIZE = 16  # 16 is average tweet token length
+
 
 class DataProvider(data.Dataset):
     """Generic data provider."""
@@ -229,51 +231,57 @@ class TextDataProvider(object):
         retweet_count = []
         favorite_count = []
         followers_count = []
-        for line in open(filename, 'r'):
-            if subset is not None and line_count >= subset:
-                break
-            obj = json.loads(line)
+        with open(filename, 'r') as f:
+            for line in f.readlines():
+                if subset is not None and line_count >= subset:
+                    break
+                obj = json.loads(line)
 
 
-            text_raw = obj['text']
-            text, tokens = self.process_text(text_raw)
-            self.vocabulary.update(tokens)
+                text_raw = obj['text']
+                text, tokens = self.process_text(text_raw)
+                self.vocabulary.update(tokens)
 
-            if data[obj['id_str']] not in labels_map:
-                error_count += 1
-                continue
+                if data[obj['id_str']] not in labels_map:
+                    error_count += 1
+                    continue
 
-            labels.append(labels_map[data[obj['id_str']]])
-            if int(labels[-1]) == 0:
-                print(obj['user'])
-                exit()
-                retweet_count.append(obj['retweet_count'])
-                followers_count.append(obj['user']['followers_count'])
-                favorite_count.append(obj['favorite_count'])
-            tweets.append(tokens)
-            tweet_length.append(len(tokens))
+                labels.append(labels_map[data[obj['id_str']]])
+                if int(labels[-1]) == 0:
+                    retweet_count.append(obj['retweet_count'])
+                    followers_count.append(obj['user']['followers_count'])
+                    favorite_count.append(obj['favorite_count'])
+                tweets.append(tokens)
+                tweet_length.append(len(tokens))
             line_count += 1
         print("Removed {}/{} labels".format(error_count, line_count))
         print("Average tweet length is {} tokens".format(int(np.mean(tweet_length))))
         print("Average {} is {}".format('favorite count', int(np.mean(favorite_count))))
         print("Average {} is {}".format('retweet count', int(np.mean(retweet_count))))
         print("Average {} is {}".format('follower count', int(np.median(followers_count))))
+        self.tweets = tweets
+        self.labels = labels
         return tweets, labels
 
     @staticmethod
     def _random_embedding():
         return np.random.normal(scale=0.6, size=(EMBED_DIM,))
 
+    def _split_corpus(self):
+        x_train, y_train, x_val, y_val, x_test, y_test = self._split_data()
+        return x_train + x_val
+
     def extract(self, filename_data, filename_labels, subset=None):
         data = self._extract_labels(filename_labels)
-        tweets_corpus, labels = self._extract_tweets(data, filename_data, subset)
+        _, _ = self._extract_tweets(data, filename_data, subset)
+        tweets_corpus = self._split_corpus()
         print("Creating word2vec model...")
         model = word2vec.Word2Vec(sentences=tweets_corpus, size=EMBED_DIM)
         model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
-        word_vectors = model.wv
+        word_vectors = list(model.wv.vocab)
+        word_vector_dict = model.wv
 
         tweets = []
-        TWEET_SIZE = 16 # 16 is average tweet token length
         for i, tweet in enumerate(tweets_corpus):
             embedded_tweet = []
             if len(tweet) >= TWEET_SIZE:
@@ -281,7 +289,7 @@ class TextDataProvider(object):
 
             # convert all into word embeddings
             for word in tweet:
-                embedding = self._random_embedding() if word not in word_vectors else word_vectors[word]
+                embedding = self._random_embedding() if word not in word_vectors else word_vector_dict[word]
                 embedded_tweet.append(embedding)
 
             if len(tweet) < TWEET_SIZE:
@@ -291,8 +299,6 @@ class TextDataProvider(object):
             assert len(embedded_tweet) == TWEET_SIZE
             tweets.append(embedded_tweet)
 
-        self.tweets = tweets
-        self.labels = labels
         return self._split_data()
 
     # def visualize(self, filename_plots='plots/tweet_distribution'):

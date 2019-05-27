@@ -65,6 +65,8 @@ class Glove():
         vocabulary = set()
         for words in x_train:
             vocabulary |= set(words)
+        print(vocabulary)
+        exit()
         self.vocabulary = vocabulary
 
     def generate_weight_matrix(self, vocabulary=None):

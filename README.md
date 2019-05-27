@@ -11,3 +11,6 @@
 Source: [80k annotated tweets](http://www.aclweb.org/anthology/N16-2013)
 
 ![Screenshot](plots/tweet_distribution_total.png)
+
+### Testing 
+`python -m unittest -v tests.py`

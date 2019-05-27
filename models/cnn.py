@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,6 +23,7 @@ class CNN(Network):
         self.use_bias = use_bias
         self.num_layers = num_layers
         self.dim_reduction_type = dim_reduction_type
+        self.drop = torch.nn.Dropout(p=0.5, inplace=False)
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
         # build the network
@@ -48,6 +48,7 @@ class CNN(Network):
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
             out = F.relu(out)  # apply relu
             print(out.shape)
+
             if self.dim_reduction_type == 'strided_convolution':  # if dim reduction is strided conv, then add a strided conv
                 self.layer_dict['dim_reduction_strided_conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
                                                                                        kernel_size=3,
@@ -89,6 +90,9 @@ class CNN(Network):
                                             bias=self.use_bias)
         out = self.logit_linear_layer(out)  # apply linear layer on flattened inputs
         print("Block is built, output volume is", out.shape)
+
+        # DROP OUT
+        out = self.drop(out)
         return out
 
     def forward(self, x):
@@ -121,6 +125,9 @@ class CNN(Network):
             out = F.adaptive_avg_pool1d(out, 2)
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
+
+        # DROP OUT
+        out = self.drop(out)
         return out
 
     def reset_parameters(self):

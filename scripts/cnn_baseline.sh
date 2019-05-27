@@ -37,4 +37,4 @@ export DATASET_DIR=${TMP}/datasets/
 source /home/${STUDENT_ID}/miniconda3/bin/activate mlp
 cd ..
 
-python baseline_experiment.py --num_epochs 1
+python baseline_experiment.py --num_epochs 100
