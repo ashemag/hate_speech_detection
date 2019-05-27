@@ -80,6 +80,15 @@ def extract_data():
 
 if __name__ == "__main__":
     x_train, y_train, x_val, y_val, x_test, y_test = extract_data()
+    # WRAP IN DP
+    trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=100, make_one_hot=False)
+    train_data = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
+
+    validset = DataProvider(inputs=np.array(x_val), targets=np.array(y_val), batch_size=100, make_one_hot=False)
+    valid_data = torch.utils.data.DataLoader(validset, batch_size=100, shuffle=True, num_workers=2)
+
+    testset = DataProvider(inputs=np.array(x_test), targets=np.array(y_test), batch_size=100, make_one_hot=False)
+    test_data = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=True, num_workers=2)
 
     args = get_args()
     model = TextCNN(input_shape=np.array(x_train).shape)
@@ -91,18 +100,8 @@ if __name__ == "__main__":
                                 weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=0.0001)
 
-    # WRAP IN DP
-    trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=100, make_one_hot=False)
-    train_data = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
-
-    validset = DataProvider(inputs=np.array(x_val), targets=np.array(y_val), batch_size=100, make_one_hot=False)
-    valid_data = torch.utils.data.DataLoader(validset, batch_size=100, shuffle=True, num_workers=2)
-
-    testset = DataProvider(inputs=np.array(x_test), targets=np.array(y_test), batch_size=100, make_one_hot=False)
-    test_data = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=True, num_workers=2)
-
     # OUTPUT
-    experiment_name = 'Vanilla_CNN_Dropout2'
+    experiment_name = 'Twitter_Pretrained_Embeddings'
     output_dir = os.path.join(ROOT_DIR, 'data/minority_class_experiments.csv')
     results_dir = os.path.join(ROOT_DIR, 'results/{}').format(experiment_name)
     start = time.time()

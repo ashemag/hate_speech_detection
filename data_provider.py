@@ -4,7 +4,7 @@ import numpy as np
 import os
 from collections import Counter
 from sklearn.model_selection import train_test_split
-from gensim.models import word2vec
+from gensim.models import word2vec, KeyedVectors
 import pandas as pd
 import seaborn as sns
 
@@ -13,10 +13,11 @@ from preprocessor import Preprocessor
 from matplotlib import pyplot as plt
 import torch.utils.data as data
 
-EMBED_DIM = 200
+GOOGLE_EMBED_DIM = 300
+TWITTER_EMBED_DIM = 400
 DEFAULT_SEED = 28
 TWEET_SIZE = 16  # 16 is average tweet token length
-
+EMBED_DIM = 200
 
 class DataProvider(data.Dataset):
     """Generic data provider."""
@@ -259,23 +260,39 @@ class TextDataProvider(object):
         return tweets, labels
 
     @staticmethod
-    def _random_embedding():
-        return np.random.normal(scale=0.6, size=(EMBED_DIM,))
+    def _random_embedding(embed_dim):
+        return np.random.normal(scale=0.6, size=(embed_dim,))
 
     def _split_corpus(self, x, y):
         x_train, y_train, x_val, y_val, x_test, y_test = self._split_data(x, y)
         return x_train + x_val
 
+    @staticmethod
+    def _fetch_model(tweets_corpus, pretrained_flag=False, saved_flag=False):
+        print("Fetching word2vec model...")
+        if pretrained_flag:
+            embed_dim = TWITTER_EMBED_DIM
+            filename = 'data/GoogleNews-vectors-negative300.bin'
+            filename = 'data/word2vec_twitter_model/word2vec_twitter_model.bin'
+            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True)
+        else:
+            filename = 'data/keyedvectors.bin'
+            embed_dim = EMBED_DIM
+            model = word2vec.Word2Vec(sentences=tweets_corpus, size=embed_dim)
+            model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
+            if not saved_flag:
+                model = word2vec.Word2Vec(sentences=tweets_corpus, size=EMBED_DIM)
+                model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
+                word_vectors = model.wv
+                word_vectors.save(filename)
+            word_vectors = KeyedVectors.load(filename)
+        return word_vectors, embed_dim
+
     def extract(self, filename_data, filename_labels, subset=None):
         data = self._extract_labels(filename_labels)
         raw_tweets, labels = self._extract_tweets(data, filename_data, subset)
         tweets_corpus = self._split_corpus(raw_tweets, labels)
-        print("Creating word2vec model...")
-        model = word2vec.Word2Vec(sentences=tweets_corpus, size=EMBED_DIM)
-        model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
-        word_vectors = list(model.wv.vocab)
-        word_vector_dict = model.wv
-
+        word_vectors, embed_dim = self._fetch_model(tweets_corpus)
         tweets = []
         for i, tweet in enumerate(raw_tweets):
             embedded_tweet = []
@@ -286,12 +303,12 @@ class TextDataProvider(object):
 
             # convert all into word embeddings
             for word in tweet:
-                embedding = self._random_embedding() if word not in word_vectors else word_vector_dict[word]
+                embedding = self._random_embedding(embed_dim) if word not in word_vectors else word_vectors[word]
                 embedded_tweet.append(embedding)
 
             if len(tweet) < TWEET_SIZE:
                 diff = TWEET_SIZE - len(tweet)
-                embedded_tweet += [self._random_embedding() for _ in range(diff)]
+                embedded_tweet += [self._random_embedding(embed_dim) for _ in range(diff)]
 
             assert len(embedded_tweet) == TWEET_SIZE
             tweets.append(embedded_tweet)
