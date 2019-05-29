@@ -11,6 +11,8 @@ from data_provider import *
 import torchvision
 import pickle
 
+from models.logistic_regression import LogisticRegression
+
 BATCH_SIZE = 64
 LEARNING_RATE = .1
 WEIGHT_DECAY = 1e-4
@@ -91,7 +93,9 @@ if __name__ == "__main__":
     test_data = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=True, num_workers=2)
 
     args = get_args()
-    model = TextCNN(input_shape=np.array(x_train).shape)
+    # model = TextCNN(input_shape=np.array(x_train).shape)
+    print(np.array(x_train).shape)
+    model = LogisticRegression(np.array(x_train).shape, n_class=4)
     if not args.cpu:
         model = model.to(model.device)
     optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE,

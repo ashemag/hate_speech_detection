@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 from gensim.models import word2vec, KeyedVectors
 import pandas as pd
 import seaborn as sns
+from sklearn.preprocessing import OneHotEncoder
 
 from globals import ROOT_DIR
 from preprocessor import Preprocessor
@@ -18,6 +19,7 @@ TWITTER_EMBED_DIM = 400
 DEFAULT_SEED = 28
 TWEET_SIZE = 16  # 16 is average tweet token length
 EMBED_DIM = 200
+NUM_CLASSES = 4
 
 class DataProvider(data.Dataset):
     """Generic data provider."""
@@ -268,7 +270,7 @@ class TextDataProvider(object):
         return x_train + x_val
 
     @staticmethod
-    def _fetch_model(tweets_corpus, pretrained_flag=False, saved_flag=False):
+    def _fetch_model(tweets_corpus, pretrained_flag=False, saved_flag=True):
         print("Fetching word2vec model...")
         if pretrained_flag:
             embed_dim = TWITTER_EMBED_DIM
