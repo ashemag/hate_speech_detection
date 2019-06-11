@@ -37,6 +37,8 @@ class CNN(Network):
         x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
 
         out = x
+        print('shape at start', out.shape)
+
         # torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True)
         for i in range(self.num_layers):  # for number of layers times
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
@@ -83,9 +85,9 @@ class CNN(Network):
                 out = self.layer_dict['dim_reduction_avg_pool_{}'.format(i)](out)
 
             print(out.shape)
-        if out.shape[-1] != 2:
-            out = F.adaptive_avg_pool1d(out,
-                                        2)  # apply adaptive pooling to make sure output of conv layers is always (2, 2) spacially (helps with comparisons).
+        # if out.shape[-1] != 2:
+        #     out = F.adaptive_avg_pool1d(out,
+        #                                 2)  # apply adaptive pooling to make sure output of conv layers is always (2, 2) spacially (helps with comparisons).
         print('shape before final linear layer', out.shape)
         out = out.view(out.shape[0], -1)
         self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
@@ -94,8 +96,6 @@ class CNN(Network):
         out = self.logit_linear_layer(out)  # apply linear layer on flattened inputs
         print("Block is built, output volume is", out.shape)
 
-        # DROP OUT
-        out = self.drop(out)
         return out
 
     def forward(self, x):
@@ -124,13 +124,11 @@ class CNN(Network):
             elif self.dim_reduction_type == 'avg_pooling':
                 out = self.layer_dict['dim_reduction_avg_pool_{}'.format(i)](out)
 
-        if out.shape[-1] != 2:
-            out = F.adaptive_avg_pool1d(out, 2)
+        # if out.shape[-1] != 2:
+            # out = F.adaptive_avg_pool1d(out, 2)
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
 
-        # DROP OUT
-        out = self.drop(out)
         return out
 
     def reset_parameters(self):
@@ -145,7 +143,93 @@ class CNN(Network):
 
         self.logit_linear_layer.reset_parameters()
 
+class CustomCNN(Network):
+    def __init__(self, input_shape, dim_reduction_type, num_output_classes, num_filters, num_layers, use_bias=False):
+        """
+        Initializes a convolutional network module object.
+        :param input_shape: The shape of the inputs going in to the network.
+        :param dim_reduction_type: The type of dimensionality reduction to apply after each convolutional stage, should be one of ['max_pooling', 'avg_pooling', 'strided_convolution', 'dilated_convolution']
+        :param num_output_classes: The number of outputs the network should have (for classification those would be the number of classes)
+        :param num_filters: Number of filters used in every conv layer, except dim reduction stages, where those are automatically infered.
+        :param num_layers: Number of conv layers (excluding dim reduction stages)
+        :param use_bias: Whether our convolutions will use a bias.
+        """
+        super(CustomCNN, self).__init__()
+        # set up class attributes useful in building the network and inference
+        self.input_shape = input_shape
+        self.num_filters = num_filters
+        self.num_output_classes = num_output_classes
+        self.use_bias = use_bias
+        self.num_layers = num_layers
+        self.dim_reduction_type = dim_reduction_type
+        # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
+        self.layer_dict = nn.ModuleDict()
+        # build the network
+        self.build_module()
 
+    def build_module(self):
+        """
+        Builds network whilst automatically inferring shapes of layers.
+        """
+        print("Building basic block of ConvolutionalNetwork using input shape", self.input_shape)
+        x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
+
+        out = x
+        print('shape at start', out.shape)
+
+        # torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True)
+        for i in range(self.num_layers):  # for number of layers times
+            self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
+                                                             # add a conv layer in the module dict
+                                                             kernel_size=3,
+                                                             out_channels=self.num_filters, padding=1,
+                                                             bias=False)
+
+            out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
+            out = F.leaky_relu(out)  # apply relu
+            print(out.shape)
+
+        print('shape before final linear layer', out.shape)
+        #out = F.avg_pool1d(out, out.shape[-1])
+        out = out.view(out.shape[0], -1)
+        self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
+                                            out_features=self.num_output_classes,
+                                            bias=self.use_bias)
+        out = self.logit_linear_layer(out)  # apply linear layer on flattened inputs
+        print("Block is built, output volume is", out.shape)
+
+        return out
+
+    def forward(self, x):
+        """
+        Forward propages the network given an input batch
+        :param x: Inputs x (b, c, h, w)
+        :return: preds (b, num_classes)
+        """
+        out = x
+        #print("forward shape at start ", out.shape)
+        for i in range(self.num_layers):  # for number of layers
+
+            out = self.layer_dict['conv_{}'.format(i)](out)  # pass through conv layer indexed at i
+            out = F.leaky_relu(out)  # pass conv outputs through ReLU
+
+        #out = F.avg_pool1d(out, out.shape[-1])
+        out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
+        out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
+
+        return out
+
+    def reset_parameters(self):
+        """
+        Re-initialize the network parameters.
+        """
+        for item in self.layer_dict.children():
+            try:
+                item.reset_parameters()
+            except:
+                pass
+
+        self.logit_linear_layer.reset_parameters()
 def TextCNN(input_shape):
-    return CNN(num_output_classes=4, num_filters=3, num_layers=3, dim_reduction_type='max_pooling', input_shape=input_shape)
+    return CustomCNN(num_output_classes=4, num_filters=3, num_layers=3, dim_reduction_type='max_pooling', input_shape=input_shape)
 
