@@ -1,18 +1,12 @@
 import json
 import csv
 import numpy as np
-import os
 from collections import Counter
 from sklearn.model_selection import train_test_split
 from gensim.models import word2vec, KeyedVectors
-import pandas as pd
-import seaborn as sns
-from sklearn.preprocessing import OneHotEncoder
-
-from globals import ROOT_DIR
 from preprocessor import Preprocessor
-from matplotlib import pyplot as plt
 import torch.utils.data as data
+from utils import *
 
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
@@ -20,6 +14,7 @@ DEFAULT_SEED = 28
 TWEET_SIZE = 16  # 16 is average tweet token length
 EMBED_DIM = 200
 NUM_CLASSES = 4
+CHAR_EMBEDDINGS = True
 
 class DataProvider(data.Dataset):
     """Generic data provider."""
@@ -193,157 +188,79 @@ class DataProvider(data.Dataset):
         return inputs_batch, targets_batch
 
 
-class TextDataProvider(object):
+class LogisticRegressionDataProvider(object):
     def __init__(self):
         self.tweets = None
         self.labels = None
         self.vocabulary = set()
 
-    @staticmethod
-    def _split_data(x, y):
-        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.2, random_state=1)
-        x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=1)
-        return x_train, y_train, x_val, y_val, x_test, y_test
+    def extract(self, filename_data, filename_labels, key='train', subset=None):
+        pass
+
+
+class CNNTextDataProvider(object):
+    def __init__(self):
+        self.tweets = None
+        self.labels = None
+
 
     @staticmethod
-    def _extract_labels(filename):
-        print("Extracting annotations")
-        data = {}
-        with open(filename, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                data[row['tweet_id']] = row['maj_label']
-        return data
-
-    @staticmethod
-    def process_text(text):
-        p = Preprocessor()
-        p.clean(text)
-        p.tokenize()
-        return p.text, p.tokens
-
-    def _extract_tweets(self, data, filename, subset):
-        print("Extracting tweets from JSON")
-        tweets = []
-        labels = []
-        line_count = 0
-        labels_map = {'hateful': 0, 'abusive': 1, 'normal': 2, 'spam': 3}
-        error_count = 0
-        tweet_length = []
-        retweet_count = []
-        favorite_count = []
-        followers_count = []
-        with open(filename, 'r') as f:
-            for line in f.readlines():
-                if subset is not None and line_count >= subset:
-                    break
-                obj = json.loads(line)
-                text_raw = obj['text']
-                text, tokens = self.process_text(text_raw)
-                self.vocabulary.update(tokens)
-
-                if data[obj['id_str']] not in labels_map:
-                    error_count += 1
-                    continue
-
-                labels.append(labels_map[data[obj['id_str']]])
-                if int(labels[-1]) == 0:
-                    retweet_count.append(obj['retweet_count'])
-                    followers_count.append(obj['user']['followers_count'])
-                    favorite_count.append(obj['favorite_count'])
-                tweets.append(tokens)
-                tweet_length.append(len(tokens))
-            line_count += 1
-        print("Removed {}/{} labels".format(error_count, line_count))
-        print("Average tweet length is {} tokens".format(int(np.mean(tweet_length))))
-        print("Average {} is {}".format('favorite count', int(np.mean(favorite_count))))
-        print("Average {} is {}".format('retweet count', int(np.mean(retweet_count))))
-        print("Average {} is {}".format('follower count', int(np.median(followers_count))))
-        return tweets, labels
-
-    @staticmethod
-    def _random_embedding(embed_dim):
-        return np.random.normal(scale=0.6, size=(embed_dim,))
-
-    def _split_corpus(self, x, y):
-        x_train, y_train, x_val, y_val, x_test, y_test = self._split_data(x, y)
-        return x_train + x_val
-
-    @staticmethod
-    def _fetch_model(tweets_corpus, pretrained_flag=False, saved_flag=True):
-        print("Fetching word2vec model...")
-        if pretrained_flag:
-            embed_dim = TWITTER_EMBED_DIM
+    def _fetch_model(tweets_corpus, key, saved_flag=True):
+        print("Using {} embeddings".format(key))
+        if key == 'google':
+            embed_dim = GOOGLE_EMBED_DIM
             filename = 'data/GoogleNews-vectors-negative300.bin'
+            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
+        elif key == 'twitter':
             filename = 'data/word2vec_twitter_model/word2vec_twitter_model.bin'
-            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True)
+            embed_dim = TWITTER_EMBED_DIM
+            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         else:
             filename = 'data/keyedvectors.bin'
             embed_dim = EMBED_DIM
-            model = word2vec.Word2Vec(sentences=tweets_corpus, size=embed_dim)
-            model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
             if not saved_flag:
-                model = word2vec.Word2Vec(sentences=tweets_corpus, size=EMBED_DIM)
+                model = word2vec.Word2Vec(sentences=tweets_corpus, size=embed_dim)
                 model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
                 word_vectors = model.wv
                 word_vectors.save(filename)
-            word_vectors = KeyedVectors.load(filename)
+            else:
+                word_vectors = KeyedVectors.load(filename)
         return word_vectors, embed_dim
 
-    def extract(self, filename_data, filename_labels, subset=None):
-        data = self._extract_labels(filename_labels)
-        raw_tweets, labels = self._extract_tweets(data, filename_data, subset)
-        tweets_corpus = self._split_corpus(raw_tweets, labels)
-        word_vectors, embed_dim = self._fetch_model(tweets_corpus)
+    @staticmethod
+    def _fetch_character_embeddings():
+        chars = 'abcdefghijklmnopqrstuvwxyz0123456789 -,;.!?:’’’ / \ | _ @  # $%ˆ&*˜‘+-=()[]{}'
+        char_dict = {}
+        for char, i in enumerate(chars):
+            one_hot = [0] * len(chars)
+            one_hot[i] = 1
+            char_dict[char] = one_hot
+        return char_dict
+
+    def extract(self, filename_data, filename_labels, key='train', subset=None):
+        data = extract_labels(filename_labels)
+        raw_tweets, labels = extract_tweets(data, filename_data, subset)
+        tweets_corpus = split_corpus(raw_tweets, labels)
+        word_vectors, embed_dim = self._fetch_model(tweets_corpus, key)
         tweets = []
         for i, tweet in enumerate(raw_tweets):
             embedded_tweet = []
 
-            # trim if too large
+            #trim if too large
             if len(tweet) >= TWEET_SIZE:
                 tweet = tweet[:TWEET_SIZE]
 
             # convert all into word embeddings
             for word in tweet:
-                embedding = self._random_embedding(embed_dim) if word not in word_vectors else word_vectors[word]
+                embedding = generate_random_embedding(embed_dim) if word not in word_vectors else word_vectors[word]
                 embedded_tweet.append(embedding)
 
+           # pad if too short
             if len(tweet) < TWEET_SIZE:
                 diff = TWEET_SIZE - len(tweet)
-                embedded_tweet += [self._random_embedding(embed_dim) for _ in range(diff)]
+                embedded_tweet += [generate_random_embedding(embed_dim) for _ in range(diff)]
 
             assert len(embedded_tweet) == TWEET_SIZE
             tweets.append(embedded_tweet)
 
-        return self._split_data(tweets, labels)
-
-    # def visualize(self, filename_plots='plots/tweet_distribution'):
-    #     if self.labels is None:
-    #         raise ValueError("Please extract data from source to populate tweets.")
-    #
-    #     cnt = Counter(self.labels)
-    #     sns.set_palette(sns.cubehelix_palette(8, start=.5, rot=-.75))
-    #     plot(cnt)
-    #    # ax = plt.bar(df['Labels'], df['Quantity'], align='center', alpha=0.5)
-    #     plt.show()
-    #     ax.set_title('Tweet Annotation Distribution')
-    #     ax.figure.savefig(filename_plots)
-
-    def analysis(self):
-        labels_map = {0: 'hateful', 1:'abusive', 2:'normal', 3:'spam'}
-
-        if self.tweets is None:
-            raise ValueError("Please extract from data source to populate tweets.")
-        cnt = Counter(self.labels)
-        total = sum(cnt.values())
-        print("Composition of labels are as follows: ")
-        for key, value in cnt.items():
-            print("{0}: {1}".format(labels_map[key], value))
-
-#
-#
-# ### TESTING ###
-# p = TextDataProvider()
-# x_train, y_train, x_val, y_val, x_test, y_test = p.extract('data/80k_tweets.json', 'data/labels.csv')
-# p.analysis()
-# #
+        return split_data(tweets, labels)
