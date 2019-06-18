@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.base import Network
 
+DILATION_PARAM = 1.4
 
 class CNN(Network):
     def __init__(self, input_shape, dim_reduction_type, num_output_classes, num_filters, num_layers, use_bias=False):
@@ -23,9 +24,11 @@ class CNN(Network):
         self.use_bias = use_bias
         self.num_layers = num_layers
         self.dim_reduction_type = dim_reduction_type
-        self.drop = torch.nn.Dropout(p=0.5, inplace=False)
+        self.drop = nn.Dropout(p=0.5, inplace=False)
+
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
+
         # build the network
         self.build_module()
 
@@ -33,69 +36,41 @@ class CNN(Network):
         """
         Builds network whilst automatically inferring shapes of layers.
         """
-        print("Building basic block of ConvolutionalNetwork using input shape", self.input_shape)
         x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
-
         out = x
-        print('shape at start', out.shape)
+        out = out.permute([0, 2, 1])
+        print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
 
-        # torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True)
-        for i in range(self.num_layers):  # for number of layers times
+        context_list = []
+        for i in range(5):  # for number of layers times
+            if i > 0:
+                # to give every layer access to all prev layers (DenseNet connectivity)
+                out = torch.cat(context_list, dim=1)
+            dilation = int(DILATION_PARAM**i)
+            # dilation = 1
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
                                                              # add a conv layer in the module dict
                                                              kernel_size=3,
-                                                             out_channels=self.num_filters, padding=1,
-                                                             bias=self.use_bias)
+                                                             out_channels=self.num_filters, padding=dilation,
+                                                             bias=False, dilation=dilation)
 
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
-            out = F.relu(out)  # apply relu
-            print(out.shape)
-
-            # APPLY DROP OUT
+            self.layer_dict['batch_norm_{}'.format(i)] = nn.BatchNorm1d(num_features=out.shape[1])
+            out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            out = F.leaky_relu(out)  # apply relu
             out = self.drop(out)
+            context_list.append(out)
 
-            if self.dim_reduction_type == 'strided_convolution':  # if dim reduction is strided conv, then add a strided conv
-                self.layer_dict['dim_reduction_strided_conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
-                                                                                       kernel_size=3,
-                                                                                       out_channels=out.shape[1],
-                                                                                       padding=1,
-                                                                                       bias=self.use_bias, stride=2,
-                                                                                       dilation=1)
-
-                out = self.layer_dict['dim_reduction_strided_conv_{}'.format(i)](
-                    out)  # use strided conv to get an output
-                out = F.relu(out)  # apply relu to the output
-            elif self.dim_reduction_type == 'dilated_convolution':  # if dim reduction is dilated conv, then add a dilated conv, using an arbitrary dilation rate of i + 2 (so it gets smaller as we go, you can choose other dilation rates should you wish to do it.)
-                self.layer_dict['dim_reduction_dilated_conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
-                                                                                       kernel_size=3,
-                                                                                       out_channels=out.shape[1],
-                                                                                       padding=1,
-                                                                                       bias=self.use_bias, stride=1,
-                                                                                       dilation=i + 2)
-                out = self.layer_dict['dim_reduction_dilated_conv_{}'.format(i)](
-                    out)  # run dilated conv on input to get output
-                out = F.relu(out)  # apply relu on output
-
-            elif self.dim_reduction_type == 'max_pooling':
-                self.layer_dict['dim_reduction_max_pool_{}'.format(i)] = nn.MaxPool1d(2, padding=1)
-                out = self.layer_dict['dim_reduction_max_pool_{}'.format(i)](out)
-
-            elif self.dim_reduction_type == 'avg_pooling':
-                self.layer_dict['dim_reduction_avg_pool_{}'.format(i)] = nn.AvgPool1d(2, padding=1)
-                out = self.layer_dict['dim_reduction_avg_pool_{}'.format(i)](out)
-
-            print(out.shape)
-        # if out.shape[-1] != 2:
-        #     out = F.adaptive_avg_pool1d(out,
-        #                                 2)  # apply adaptive pooling to make sure output of conv layers is always (2, 2) spacially (helps with comparisons).
-        print('shape before final linear layer', out.shape)
+        out = torch.cat(context_list, dim=1)
+        out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
+
         self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
                                             out_features=self.num_output_classes,
                                             bias=self.use_bias)
+
         out = self.logit_linear_layer(out)  # apply linear layer on flattened inputs
         print("Block is built, output volume is", out.shape)
-
         return out
 
     def forward(self, x):
@@ -105,27 +80,21 @@ class CNN(Network):
         :return: preds (b, num_classes)
         """
         out = x
-        for i in range(self.num_layers):  # for number of layers
+        out = out.permute([0, 2, 1])
+        print(out.shape)
+        context_list = []
+        for i in range(5):  # for number of layers times
+            if i > 0:
+                out = torch.cat(context_list, dim=1)
 
-            out = self.layer_dict['conv_{}'.format(i)](out)  # pass through conv layer indexed at i
-            out = F.relu(out)  # pass conv outputs through ReLU
-            if self.dim_reduction_type == 'strided_convolution':  # if strided convolution dim reduction then
-                out = self.layer_dict['dim_reduction_strided_conv_{}'.format(i)](
-                    out)  # pass previous outputs through a strided convolution indexed i
-                out = F.relu(out)  # pass strided conv outputs through ReLU
+            out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
+            out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            out = F.leaky_relu(out)
+            out = self.drop(out)
+            context_list.append(out)
 
-            elif self.dim_reduction_type == 'dilated_convolution':
-                out = self.layer_dict['dim_reduction_dilated_conv_{}'.format(i)](out)
-                out = F.relu(out)
-
-            elif self.dim_reduction_type == 'max_pooling':
-                out = self.layer_dict['dim_reduction_max_pool_{}'.format(i)](out)
-
-            elif self.dim_reduction_type == 'avg_pooling':
-                out = self.layer_dict['dim_reduction_avg_pool_{}'.format(i)](out)
-
-        # if out.shape[-1] != 2:
-            # out = F.adaptive_avg_pool1d(out, 2)
+        out = torch.cat(context_list, dim=1)
+        out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
 
@@ -143,7 +112,7 @@ class CNN(Network):
 
         self.logit_linear_layer.reset_parameters()
 
-class CustomCNN(Network):
+class CharacterCNN(Network):
     def __init__(self, input_shape, dim_reduction_type, num_output_classes, num_filters, num_layers, use_bias=False):
         """
         Initializes a convolutional network module object.
@@ -154,7 +123,7 @@ class CustomCNN(Network):
         :param num_layers: Number of conv layers (excluding dim reduction stages)
         :param use_bias: Whether our convolutions will use a bias.
         """
-        super(CustomCNN, self).__init__()
+        super(CharacterCNN, self).__init__()
         # set up class attributes useful in building the network and inference
         self.input_shape = input_shape
         self.num_filters = num_filters
@@ -162,8 +131,11 @@ class CustomCNN(Network):
         self.use_bias = use_bias
         self.num_layers = num_layers
         self.dim_reduction_type = dim_reduction_type
+        self.drop = nn.Dropout(p=0.5, inplace=False)
+
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
+
         # build the network
         self.build_module()
 
@@ -171,33 +143,41 @@ class CustomCNN(Network):
         """
         Builds network whilst automatically inferring shapes of layers.
         """
-        print("Building basic block of ConvolutionalNetwork using input shape", self.input_shape)
         x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
-
         out = x
-        print('shape at start', out.shape)
+        out = out.permute([0, 2, 1])
+        print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
 
-        # torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True)
-        for i in range(self.num_layers):  # for number of layers times
+        context_list = []
+        for i in range(5):  # for number of layers times
+            if i > 0:
+                # to give every layer access to all prev layers (DenseNet connectivity)
+                out = torch.cat(context_list, dim=1)
+            dilation = int(DILATION_PARAM**i)
+            # dilation = 1
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
                                                              # add a conv layer in the module dict
                                                              kernel_size=3,
-                                                             out_channels=self.num_filters, padding=1,
-                                                             bias=False)
+                                                             out_channels=self.num_filters, padding=dilation,
+                                                             bias=False, dilation=dilation)
 
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
+            self.layer_dict['batch_norm_{}'.format(i)] = nn.BatchNorm1d(num_features=out.shape[1])
+            out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)  # apply relu
-            print(out.shape)
+            out = self.drop(out)
+            context_list.append(out)
 
-        print('shape before final linear layer', out.shape)
-        #out = F.avg_pool1d(out, out.shape[-1])
+        out = torch.cat(context_list, dim=1)
+        out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
+
         self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
                                             out_features=self.num_output_classes,
                                             bias=self.use_bias)
+
         out = self.logit_linear_layer(out)  # apply linear layer on flattened inputs
         print("Block is built, output volume is", out.shape)
-
         return out
 
     def forward(self, x):
@@ -207,13 +187,21 @@ class CustomCNN(Network):
         :return: preds (b, num_classes)
         """
         out = x
-        #print("forward shape at start ", out.shape)
-        for i in range(self.num_layers):  # for number of layers
+        out = out.permute([0, 2, 1])
+        print(out.shape)
+        context_list = []
+        for i in range(5):  # for number of layers times
+            if i > 0:
+                out = torch.cat(context_list, dim=1)
 
-            out = self.layer_dict['conv_{}'.format(i)](out)  # pass through conv layer indexed at i
-            out = F.leaky_relu(out)  # pass conv outputs through ReLU
+            out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
+            out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            out = F.leaky_relu(out)
+            out = self.drop(out)
+            context_list.append(out)
 
-        #out = F.avg_pool1d(out, out.shape[-1])
+        out = torch.cat(context_list, dim=1)
+        out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
 
@@ -230,6 +218,7 @@ class CustomCNN(Network):
                 pass
 
         self.logit_linear_layer.reset_parameters()
-def TextCNN(input_shape):
-    return CustomCNN(num_output_classes=4, num_filters=3, num_layers=3, dim_reduction_type='max_pooling', input_shape=input_shape)
+
+def WordLevelCNN(input_shape):
+    return CNN(num_output_classes=4, num_filters=64, num_layers=3, dim_reduction_type='max_pooling', input_shape=input_shape)
 

@@ -1,30 +1,38 @@
+"""
+Runs baseline experiments
+"""
 import argparse
-import ast
-import os
 import time
-
-import torch
 from torch import optim
-from models.cnn import *
 from globals import ROOT_DIR
+from models.cnn import *
 from data_provider import *
-import torchvision
 import pickle
-
+import os
 from models.logistic_regression import LogisticRegression
 
+# PARAMS
 BATCH_SIZE = 64
-LEARNING_RATE = .1
 WEIGHT_DECAY = 1e-4
-MOMENTUM = .9
 VERBOSE = True
+FILENAME = 'data/80k_tweets.json'
+FILENAME_LABELS = 'data/labels.csv'
 
 
 def get_args():
+    """
+    TO parse user parameters
+    :return:
+    """
     parser = argparse.ArgumentParser(description='CNN Hate Speech Detection Experiment.')
     parser.add_argument('--seed', type=int, default=28)
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--cpu', type=bool, default=False)
+    parser.add_argument('--model', type=str, default='CNN')
+    parser.add_argument('--name', type=str, default='CNN_Experiment')
+    parser.add_argument('--embedding', type=str, default='N/A')
+    parser.add_argument('--embedding_level', type=str, default='word')
+
     args = parser.parse_args()
 
     if VERBOSE:
@@ -49,65 +57,82 @@ def prepare_output_file(filename, output=None, clean_flag=False):
         if output is None:
             raise ValueError("Please specify output to write to output file.")
 
-        with open(filename, 'w') as csvfile:
+        with open(filename, 'a') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=list(output.keys()))
-            writer.writeheader()
+            if not file_exists:
+                writer.writeheader()
             if VERBOSE:
                 print("Writing to file {0}".format(filename))
                 print(output)
             writer.writerow(output)
 
 
-def extract_data():
-    # DATA
-    if True:
-        p = TextDataProvider()
-        x_train, y_train, x_val, y_val, x_test, y_test = p.extract('data/80k_tweets.json', 'data/labels.csv')
-        d = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test, 'y_test': y_test}
-        for key, value in d.items():
-            path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(key))
-            with open(path, 'wb') as f:
-                pickle.dump(value, f)
-    # else:
-    #     res = []
-    #     for val in ['x_train', 'y_train', 'x_val', 'y_val', 'x_test', 'y_test']:
-    #         path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(val))
-    #         with open(path, 'rb') as f:
-    #             res.append(pickle.load(f))
-    #     x_train, y_train, x_val, y_val, x_test, y_test = res
-    if VERBOSE:
-        print("SIZES: training set: {}, validation set: {}, test set: {}".format(len(x_train), len(x_val), len(x_test)))
-    return x_train, y_train, x_val, y_val, x_test, y_test
+def extract_data(embedding_key, embedding_level_key, model):
+    """
+    To get training/valid/test data
+    :param key: True if data is saved and can pull from /data
+    :return:
+    """
+    if model == 'CNN':
+        saved_flag = False
+        if not saved_flag:
+            p = CNNTextDataProvider()
+            x_train, y_train, x_val, y_val, x_test, y_test = p.extract(FILENAME, FILENAME_LABELS, embedding_key, embedding_level_key)
+            d = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test, 'y_test': y_test}
+            for key, value in d.items():
+                path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(key))
+                with open(path, 'wb') as f:
+                    pickle.dump(value, f)
+        else:
+            res = []
+            for val in ['x_train', 'y_train', 'x_val', 'y_val', 'x_test', 'y_test']:
+                path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(val))
+                with open(path, 'rb') as f:
+                    res.append(pickle.load(f))
+            x_train, y_train, x_val, y_val, x_test, y_test = res
+        if VERBOSE:
+            print("training set: {}, validation set: {}, test set: {}".format(len(x_train), len(x_val), len(x_test)))
+        return x_train, y_train, x_val, y_val, x_test, y_test
+    else:
+        return LogisticRegressionDataProvider().extract(FILENAME, FILENAME_LABELS)
+
+
+def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test):
+    # WRAP IN DP
+    trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=100, make_one_hot=False,
+                            seed=args.seed)
+    train_data = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
+
+    validset = DataProvider(inputs=np.array(x_val), targets=np.array(y_val), batch_size=100, make_one_hot=False,
+                            seed=args.seed)
+    valid_data = torch.utils.data.DataLoader(validset, batch_size=100, shuffle=True, num_workers=2)
+
+    testset = DataProvider(inputs=np.array(x_test), targets=np.array(y_test), batch_size=100, make_one_hot=False,
+                           seed=args.seed)
+    test_data = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=True, num_workers=2)
+    return train_data, valid_data, test_data
 
 
 if __name__ == "__main__":
-    x_train, y_train, x_val, y_val, x_test, y_test = extract_data()
-    # WRAP IN DP
-    trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=100, make_one_hot=False)
-    train_data = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
-
-    validset = DataProvider(inputs=np.array(x_val), targets=np.array(y_val), batch_size=100, make_one_hot=False)
-    valid_data = torch.utils.data.DataLoader(validset, batch_size=100, shuffle=True, num_workers=2)
-
-    testset = DataProvider(inputs=np.array(x_test), targets=np.array(y_test), batch_size=100, make_one_hot=False)
-    test_data = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=True, num_workers=2)
-
     args = get_args()
-    # model = TextCNN(input_shape=np.array(x_train).shape)
-    print(np.array(x_train).shape)
-    model = LogisticRegression(np.array(x_train).shape, n_class=4)
+    x_train, y_train, x_val, y_val, x_test, y_test = extract_data(args.embedding, args.embedding_level, args.model)
+    train_data, valid_data, test_data = wrap_data(x_train, y_train, x_val, y_val, x_test, y_test)
+
+    if args.model == 'CNN':
+        model = WordLevelCNN(input_shape=np.array(x_train).shape)
+    if args.model == 'logistic_regression':
+        model = LogisticRegression(input_shape=np.array(x_train).shape, n_class=4)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    scheduler = None
+
     if not args.cpu:
         model = model.to(model.device)
-    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE,
-                                momentum=MOMENTUM,
-                                nesterov=True,
-                                weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=0.0001)
 
     # OUTPUT
-    experiment_name = 'Twitter_Pretrained_Embeddings'
-    output_dir = os.path.join(ROOT_DIR, 'data/minority_class_experiments.csv')
-    results_dir = os.path.join(ROOT_DIR, 'results/{}').format(experiment_name)
+    results_dir = os.path.join(ROOT_DIR, 'results/{}').format(args.name)
     start = time.time()
     bpm = model.train_evaluate(
         train_set=train_data,
@@ -117,9 +142,16 @@ if __name__ == "__main__":
         optimizer=optimizer,
         results_dir=results_dir,
         scheduler=scheduler,
-        label_mapping={0:'hateful', 1:'abusive', 2:'normal', 3:'spam'}
+        label_mapping={0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'},
+        criterion=criterion
     )
+
+    # SAVE RESULTS
+    bpm['embedding'] = args.embedding
+    bpm['embedding_level'] = args.embedding_level
+    bpm['seed'] = args.seed
     print(bpm)
     print("Total time (min): {}".format(round((time.time() - start) / float(60), 4)))
-    results_dir_bpm = os.path.join(ROOT_DIR, '{}/best_performing_model.csv'.format(results_dir))
+    title = '_'.join([args.model, args.name, args.embedding, args.embedding_level])
+    results_dir_bpm = os.path.join(ROOT_DIR, '{}/{}.csv'.format(results_dir, title))
     prepare_output_file(output=bpm, filename=results_dir_bpm)

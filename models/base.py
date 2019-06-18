@@ -8,12 +8,12 @@ from collections import OrderedDict
 import torch.nn as nn
 from collections import defaultdict
 import pickle
+import warnings
 from sklearn.metrics import f1_score
 
 # remove warning for f-score, precision, recall
 def warn(*args, **kwargs):
     pass
-import warnings
 warnings.warn = warn
 
 
@@ -40,7 +40,7 @@ class Network(torch.nn.Module):
         self.train_data = None
         self.optimizer = None
         self.train_file_path = None
-        self.cross_entropy = None
+        self.criterion = None
         self.scheduler = None
         self.gpu = True
 
@@ -92,11 +92,8 @@ class Network(torch.nn.Module):
         print(statistics_to_save)
         storage_utils.save_statistics(statistics_to_save,train_file_path)
 
-    def train_evaluate(self, train_set, valid_full, test_full, num_epochs,
-                       optimizer, results_dir,
-                       label_mapping=None,
-                       attack=None,
-                       scheduler=None):
+    def train_evaluate(self, train_set, valid_full, test_full, num_epochs, optimizer, results_dir,
+                       criterion=torch.nn.CrossEntropyLoss(), label_mapping=None, scheduler=None):
 
         # SET OUTPUT PATH
         if not os.path.exists(results_dir): os.makedirs(results_dir)
@@ -104,16 +101,13 @@ class Network(torch.nn.Module):
         valid_and_test_results_path = os.path.join(results_dir, 'valid_and_test_results.txt')
         model_save_dir = os.path.join(results_dir, 'model')
 
-        if attack is not None:
-            advers_images_path = os.path.join(results_dir, 'advers_images.pickle')
-            advs_images_dict = {}
-
         # SET LOGS
         logger = Logger(stream=sys.stderr, disable=False)
         gpu = self.gpu
         self.num_epochs = num_epochs
         self.optimizer = optimizer
-        self.cross_entropy = torch.nn.CrossEntropyLoss()
+        self.criterion = criterion
+
         if scheduler is not None:
             self.scheduler = scheduler
 
@@ -197,18 +191,13 @@ class Network(torch.nn.Module):
             # save train statistics.
             storage_utils.save_statistics(train_statistics_to_save, file_path=train_results_path)
 
-            # save adversarial images.
-            if attack is not None:
-                with open(advers_images_path,
-                          'wb') as f:  # note you overwrite the file each time but that okay since advs_images_dict grows each epoch.
-                    pickle.dump(advs_images_dict, f)
-
             # save model.
             #self.save_model(model_save_dir, model_save_name='model_epoch_{}'.format(str(current_epoch)))
             logger.print(train_statistics_to_save)
 
             # save bpm statistics
-            if test_statistics_to_save['valid_acc'] > bpm['valid_acc']:
+            if (test_statistics_to_save['valid_acc_class_hateful'] + test_statistics_to_save['valid_acc_class_abusive'])\
+                    > (bpm['valid_acc_class_hateful'] + bpm['valid_acc_class_abusive']):
                 for key, value in test_statistics_to_save.items():
                     bpm[key] = value
                 for key, value in train_statistics_to_save.items():
@@ -235,7 +224,6 @@ class Network(torch.nn.Module):
         if len(y_min) > 0:
             y_min = torch.stack(y_min, dim=0)
             y_pred_min = torch.stack(y_pred_min, dim=0)
-
             loss_min = (criterion(input=y_pred_min, target=y_min.view(-1)))
             acc_min = self.get_acc_batch(y_min, y_pred_min)
         return loss_min, acc_min
@@ -255,7 +243,7 @@ class Network(torch.nn.Module):
 
     def train_iteration(self, x_all, y_all, label_mapping):
         self.train()
-        criterion = nn.CrossEntropyLoss().cuda()
+        criterion = self.criterion.cuda()
         x_all = x_all.float()
         y_pred_all = self.forward(x_all)
         loss_all = criterion(input=y_pred_all, target=y_all.view(-1))
@@ -278,12 +266,12 @@ class Network(torch.nn.Module):
 
     def valid_iteration(self, type_key, x_all, y_all, label_mapping):
         with torch.no_grad():
-            self.eval() # should be eval but something BN - todo: change later if no problems.
+            self.eval()
             '''
             Evaluating accuracy on whole batch 
             Evaluating accuracy on min examples 
             '''
-            criterion = nn.CrossEntropyLoss().cuda()
+            criterion = self.criterion.cuda()
             x_all = x_all.float()
             y_pred_all = self.forward(x_all)
             loss_all = criterion(input=y_pred_all, target=y_all.view(-1))

@@ -3,6 +3,9 @@ import torch.nn as nn
 from models.base import Network
 import torch.nn.functional as F
 
+NUM_LAYERS = 1
+
+
 class LogisticRegression(Network):
     def __init__(self, input_shape, n_class):
         super(LogisticRegression, self).__init__()
@@ -14,13 +17,20 @@ class LogisticRegression(Network):
     def build_module(self):
         x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
         out = x
-        self.layer_dict['linear'] = nn.Linear(out.shape[1], 1)
+        print('input shape is ', out.shape)
+        out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
+        for i in range(NUM_LAYERS):
+            self.layer_dict['linear_{}'.format(i)] = nn.Linear(out.shape[1], self.num_output_classes)
+            out = self.layer_dict['linear_{}'.format(i)](out)
 
+        out = F.relu(out)
         return out
 
     def forward(self, x):
         out = x
-        # out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
-        out = self.layer_dict['linear'](out)
-        # out = F.relu(out)
+        out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
+        for i in range(NUM_LAYERS):
+            out = self.layer_dict['linear_{}'.format(i)](out)
+
+        out = F.relu(out)
         return out

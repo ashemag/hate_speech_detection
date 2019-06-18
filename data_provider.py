@@ -2,25 +2,29 @@ import json
 import csv
 import numpy as np
 from collections import Counter
-from sklearn.model_selection import train_test_split
+
+from sklearn.feature_extraction.text import TfidfTransformer, CountVectorizer, TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split, cross_val_score
 from gensim.models import word2vec, KeyedVectors
 from preprocessor import Preprocessor
 import torch.utils.data as data
 from utils import *
+import pandas as pd
 
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
-DEFAULT_SEED = 28
-TWEET_SIZE = 16  # 16 is average tweet token length
+TWEET_WORD_SIZE = 17  # 16 is average tweet token length
+TWEET_CHAR_SIZE = 121
 EMBED_DIM = 200
 NUM_CLASSES = 4
-CHAR_EMBEDDINGS = True
+
 
 class DataProvider(data.Dataset):
     """Generic data provider."""
 
     def __init__(self, inputs, targets, batch_size, max_num_batches=-1,
-                 shuffle_order=True, rng=None,make_one_hot=True,with_replacement=False):
+                 shuffle_order=True, seed=28, make_one_hot=True, with_replacement=False):
         """Create a new data provider object.
 
         Args:
@@ -35,7 +39,7 @@ class DataProvider(data.Dataset):
                 used. If set to -1 all of the data will be used.
             shuffle_order (bool): Whether to randomly permute the order of
                 the data before each epoch.
-            rng (RandomState): A seeded random number generator.
+            seed: to set random state
         """
         self.with_replacement = with_replacement
 
@@ -56,9 +60,7 @@ class DataProvider(data.Dataset):
         self._update_num_batches()
         self.shuffle_order = shuffle_order
         self._current_order = np.arange(inputs.shape[0])
-        if rng is None:
-            rng = np.random.RandomState(DEFAULT_SEED)
-        self.rng = rng
+        self.rng = np.random.RandomState(seed)
         self.new_epoch()
 
     @property
@@ -189,21 +191,20 @@ class DataProvider(data.Dataset):
 
 
 class LogisticRegressionDataProvider(object):
-    def __init__(self):
-        self.tweets = None
-        self.labels = None
-        self.vocabulary = set()
+    def extract(self, filename_data, filename_labels):
+        data = extract_labels(filename_labels)
+        raw_tweets, labels = extract_tweets(data, filename_data)
+        x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels)
 
-    def extract(self, filename_data, filename_labels, key='train', subset=None):
-        pass
+        vectorizer = TfidfVectorizer(use_idf=True, stop_words='english', max_features=10000)
+        x_tfidf_train = vectorizer.fit_transform(x_train).todense()
+        x_tfidf_val = vectorizer.transform(x_val).todense()
+        x_tfidf_test = vectorizer.transform(x_test).todense()
+        print(x_tfidf_train.shape)
+        return x_tfidf_train, y_train, x_tfidf_val, y_val, x_tfidf_test, y_test
 
 
 class CNNTextDataProvider(object):
-    def __init__(self):
-        self.tweets = None
-        self.labels = None
-
-
     @staticmethod
     def _fetch_model(tweets_corpus, key, saved_flag=True):
         print("Using {} embeddings".format(key))
@@ -212,8 +213,8 @@ class CNNTextDataProvider(object):
             filename = 'data/GoogleNews-vectors-negative300.bin'
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         elif key == 'twitter':
-            filename = 'data/word2vec_twitter_model/word2vec_twitter_model.bin'
             embed_dim = TWITTER_EMBED_DIM
+            filename = 'data/word2vec_twitter_model/word2vec_twitter_model.bin'
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         else:
             filename = 'data/keyedvectors.bin'
@@ -228,39 +229,65 @@ class CNNTextDataProvider(object):
         return word_vectors, embed_dim
 
     @staticmethod
-    def _fetch_character_embeddings():
-        chars = 'abcdefghijklmnopqrstuvwxyz0123456789 -,;.!?:’’’ / \ | _ @  # $%ˆ&*˜‘+-=()[]{}'
-        char_dict = {}
-        for char, i in enumerate(chars):
-            one_hot = [0] * len(chars)
-            one_hot[i] = 1
-            char_dict[char] = one_hot
-        return char_dict
-
-    def extract(self, filename_data, filename_labels, key='train', subset=None):
-        data = extract_labels(filename_labels)
-        raw_tweets, labels = extract_tweets(data, filename_data, subset)
-        tweets_corpus = split_corpus(raw_tweets, labels)
-        word_vectors, embed_dim = self._fetch_model(tweets_corpus, key)
+    def tokenize(raw_tweets):
         tweets = []
+        for tweet in raw_tweets:
+            text, tokens = process_text(tweet)
+            tweets.append(tokens)
+        return tweets
+
+    @staticmethod
+    def fetch_character_embeddings(raw_tweets):
+        chars = 'abcdefghijklmnopqrstuvwxyz0123456789 -,;.!?:’’’/\|_@#$%ˆ&*˜‘+-=()[]{}'
+        char_mapping = {char: np.eye(len(chars))[index] for index, char in enumerate(chars)}
+        processed_tweets = []
+        for i, tweet in enumerate(raw_tweets):
+            # trim if too large
+            if len(tweet) >= TWEET_CHAR_SIZE:
+                tweet = tweet[:TWEET_CHAR_SIZE]
+
+            embedded_tweet = [char_mapping[char] if char in char_mapping else np.zeros(len(chars)) for char in tweet]
+
+            # pad if too short
+            if len(tweet) < TWEET_CHAR_SIZE:
+                diff = TWEET_CHAR_SIZE - len(tweet)
+                embedded_tweet += [np.zeros(len(chars)) for _ in range(diff)]
+            processed_tweets.append(embedded_tweet)
+        return processed_tweets
+
+    @staticmethod
+    def fetch_word_embeddings(raw_tweets, word_vectors, embed_dim):
+        processed_tweets = []
         for i, tweet in enumerate(raw_tweets):
             embedded_tweet = []
 
-            #trim if too large
-            if len(tweet) >= TWEET_SIZE:
-                tweet = tweet[:TWEET_SIZE]
+            # trim if too large
+            if len(tweet) >= TWEET_WORD_SIZE:
+                tweet = tweet[:TWEET_WORD_SIZE]
 
             # convert all into word embeddings
             for word in tweet:
                 embedding = generate_random_embedding(embed_dim) if word not in word_vectors else word_vectors[word]
                 embedded_tweet.append(embedding)
 
-           # pad if too short
-            if len(tweet) < TWEET_SIZE:
-                diff = TWEET_SIZE - len(tweet)
+            # pad if too short
+            if len(tweet) < TWEET_WORD_SIZE:
+                diff = TWEET_WORD_SIZE - len(tweet)
                 embedded_tweet += [generate_random_embedding(embed_dim) for _ in range(diff)]
 
-            assert len(embedded_tweet) == TWEET_SIZE
-            tweets.append(embedded_tweet)
+            assert len(embedded_tweet) == TWEET_WORD_SIZE
+            processed_tweets.append(embedded_tweet)
+        return processed_tweets
 
-        return split_data(tweets, labels)
+    def extract(self, filename_data, filename_labels, embedding_key, embedding_level_key, subset=None):
+        data = extract_labels(filename_labels)
+        raw_tweets, labels = extract_tweets(data, filename_data, subset)
+
+        if embedding_level_key == 'word':
+            raw_tweets = self.tokenize(raw_tweets)
+            x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels)
+            word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
+            processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
+        else: # CHAR
+            processed_tweets = self.fetch_character_embeddings(raw_tweets)
+        return split_data(processed_tweets, labels)
