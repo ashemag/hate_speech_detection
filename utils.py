@@ -66,7 +66,7 @@ def extract_tweets(data, filename, subset=None):
             tweets.append(text_raw)
             tweet_char_length.append(len(text_raw))
             tweet_length.append(len(text_raw.split(' ')))
-        line_count += 1
+            line_count += 1
     print("Removed {}/{} labels".format(error_count, line_count))
     print("Average tweet length is {} words".format(int(np.mean(tweet_length))))
     print("Average tweet length is {} characters".format(int(np.mean(tweet_char_length))))

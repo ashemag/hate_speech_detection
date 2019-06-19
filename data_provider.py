@@ -14,8 +14,8 @@ import pandas as pd
 
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
-TWEET_WORD_SIZE = 17  # 16 is average tweet token length
-TWEET_CHAR_SIZE = 121
+TWEET_SENTENCE_SIZE = 17  # 16 is average tweet token length
+TWEET_WORD_SIZE = 10
 EMBED_DIM = 200
 NUM_CLASSES = 4
 
@@ -242,17 +242,37 @@ class CNNTextDataProvider(object):
         char_mapping = {char: np.eye(len(chars))[index] for index, char in enumerate(chars)}
         processed_tweets = []
         for i, tweet in enumerate(raw_tweets):
-            # trim if too large
-            if len(tweet) >= TWEET_CHAR_SIZE:
-                tweet = tweet[:TWEET_CHAR_SIZE]
+            embedded_tweet = []
 
-            embedded_tweet = [char_mapping[char] if char in char_mapping else np.zeros(len(chars)) for char in tweet]
+            # trim if too large
+            if len(tweet) >= TWEET_SENTENCE_SIZE:
+                tweet = tweet[:TWEET_SENTENCE_SIZE]
+
+            # convert all into word embeddings
+            for word in tweet:
+                # trim if too large
+                if len(word) >= TWEET_WORD_SIZE:
+                    word = word[:TWEET_WORD_SIZE]
+
+                embedded_word = [char_mapping[char] if char in char_mapping else np.zeros(len(chars)) for char in word]
+
+                # pad if too short
+                if len(word) <= TWEET_WORD_SIZE:
+                    diff = TWEET_WORD_SIZE - len(word)
+                    embedded_word += [np.zeros(len(chars)) for _ in range(diff)]
+
+                embedded_tweet.append(np.array(embedded_word))
 
             # pad if too short
-            if len(tweet) < TWEET_CHAR_SIZE:
-                diff = TWEET_CHAR_SIZE - len(tweet)
-                embedded_tweet += [np.zeros(len(chars)) for _ in range(diff)]
-            processed_tweets.append(embedded_tweet)
+            if len(tweet) <= TWEET_SENTENCE_SIZE:
+                diff = TWEET_SENTENCE_SIZE - len(tweet)
+                random_words = np.zeros((diff, TWEET_WORD_SIZE, len(chars)))
+                for random_word in random_words:
+                    embedded_tweet.append(random_word)
+
+            processed_tweets.append(np.array(embedded_tweet))
+
+        print("embedded doc shape {}".format(np.array(processed_tweets).shape))
         return processed_tweets
 
     @staticmethod
@@ -262,8 +282,8 @@ class CNNTextDataProvider(object):
             embedded_tweet = []
 
             # trim if too large
-            if len(tweet) >= TWEET_WORD_SIZE:
-                tweet = tweet[:TWEET_WORD_SIZE]
+            if len(tweet) >= TWEET_SENTENCE_SIZE:
+                tweet = tweet[:TWEET_SENTENCE_SIZE]
 
             # convert all into word embeddings
             for word in tweet:
@@ -271,11 +291,11 @@ class CNNTextDataProvider(object):
                 embedded_tweet.append(embedding)
 
             # pad if too short
-            if len(tweet) < TWEET_WORD_SIZE:
-                diff = TWEET_WORD_SIZE - len(tweet)
+            if len(tweet) < TWEET_SENTENCE_SIZE:
+                diff = TWEET_SENTENCE_SIZE - len(tweet)
                 embedded_tweet += [generate_random_embedding(embed_dim) for _ in range(diff)]
 
-            assert len(embedded_tweet) == TWEET_WORD_SIZE
+            assert len(embedded_tweet) == TWEET_SENTENCE_SIZE
             processed_tweets.append(embedded_tweet)
         return processed_tweets
 
@@ -289,5 +309,6 @@ class CNNTextDataProvider(object):
             word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
             processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
         else: # CHAR
+            raw_tweets = self.tokenize(raw_tweets)
             processed_tweets = self.fetch_character_embeddings(raw_tweets)
         return split_data(processed_tweets, labels)

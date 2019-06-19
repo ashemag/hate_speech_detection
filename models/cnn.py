@@ -113,7 +113,7 @@ class CNN(Network):
         self.logit_linear_layer.reset_parameters()
 
 class CharacterCNN(Network):
-    def __init__(self, input_shape, dim_reduction_type, num_output_classes, num_filters, num_layers, use_bias=False):
+    def __init__(self, input_shape, num_output_classes, num_filters, num_layers, use_bias=False):
         """
         Initializes a convolutional network module object.
         :param input_shape: The shape of the inputs going in to the network.
@@ -130,7 +130,6 @@ class CharacterCNN(Network):
         self.num_output_classes = num_output_classes
         self.use_bias = use_bias
         self.num_layers = num_layers
-        self.dim_reduction_type = dim_reduction_type
         self.drop = nn.Dropout(p=0.5, inplace=False)
 
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
@@ -145,9 +144,26 @@ class CharacterCNN(Network):
         """
         x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
         out = x
-        out = out.permute([0, 2, 1])
-        print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
+        print("build module input {}".format(out.shape))
 
+        ### CHARACTER EMBEDDING: embedded doc shape (58358, 17, 10, 69)
+        out = out.reshape((x.shape[0]*x.shape[1], x.shape[2], x.shape[3]))
+        
+        self.layer_dict['conv_{}'.format('char')] = nn.Conv1d(in_channels=out.shape[1],
+                                                              kernel_size=3,
+                                                              out_channels=self.num_filters,
+                                                              padding=1,
+                                                              bias=False,
+                                                              dilation=1)
+
+        out = self.layer_dict['conv_{}'.format('char')](out)
+        out = F.avg_pool1d(out, out.shape[-1])
+        print(out.shape)
+        # torch.Size([634916, 64, 1])
+        # out shape (58358, 17, 10)
+
+        out = out.reshape((x.shape[0], x.shape[1], self.num_filters))
+        print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
         context_list = []
         for i in range(5):  # for number of layers times
             if i > 0:
@@ -187,8 +203,11 @@ class CharacterCNN(Network):
         :return: preds (b, num_classes)
         """
         out = x
-        out = out.permute([0, 2, 1])
-        print(out.shape)
+        out = out.reshape((x.shape[0]*x.shape[1], x.shape[2], x.shape[3]))
+        out = self.layer_dict['conv_{}'.format('char')](out)
+        out = F.avg_pool1d(out, out.shape[-1])
+        out = out.reshape((x.shape[0], x.shape[1], self.num_filters))
+
         context_list = []
         for i in range(5):  # for number of layers times
             if i > 0:
@@ -219,6 +238,10 @@ class CharacterCNN(Network):
 
         self.logit_linear_layer.reset_parameters()
 
+
 def WordLevelCNN(input_shape):
     return CNN(num_output_classes=4, num_filters=64, num_layers=3, dim_reduction_type='max_pooling', input_shape=input_shape)
 
+
+def CharacterLevelCNN(input_shape):
+    return CharacterCNN(num_output_classes=4, num_filters=64, num_layers=3, input_shape=input_shape)

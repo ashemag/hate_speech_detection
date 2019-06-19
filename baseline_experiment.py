@@ -79,10 +79,11 @@ def extract_data(embedding_key, embedding_level_key, model):
             p = CNNTextDataProvider()
             x_train, y_train, x_val, y_val, x_test, y_test = p.extract(FILENAME, FILENAME_LABELS, embedding_key, embedding_level_key)
             d = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test, 'y_test': y_test}
-            for key, value in d.items():
-                path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(key))
-                with open(path, 'wb') as f:
-                    pickle.dump(value, f)
+
+            # for key, value in d.items():
+            #     path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(key))
+            #     with open(path, 'wb') as f:
+            #         pickle.dump(value, f)
         else:
             res = []
             for val in ['x_train', 'y_train', 'x_val', 'y_val', 'x_test', 'y_test']:
@@ -99,17 +100,17 @@ def extract_data(embedding_key, embedding_level_key, model):
 
 def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test):
     # WRAP IN DP
-    trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=100, make_one_hot=False,
+    trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=BATCH_SIZE, make_one_hot=False,
                             seed=args.seed)
-    train_data = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
+    train_data = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
     validset = DataProvider(inputs=np.array(x_val), targets=np.array(y_val), batch_size=100, make_one_hot=False,
                             seed=args.seed)
-    valid_data = torch.utils.data.DataLoader(validset, batch_size=100, shuffle=True, num_workers=2)
+    valid_data = torch.utils.data.DataLoader(validset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
     testset = DataProvider(inputs=np.array(x_test), targets=np.array(y_test), batch_size=100, make_one_hot=False,
                            seed=args.seed)
-    test_data = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=True, num_workers=2)
+    test_data = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
     return train_data, valid_data, test_data
 
 
@@ -117,11 +118,14 @@ if __name__ == "__main__":
     args = get_args()
     x_train, y_train, x_val, y_val, x_test, y_test = extract_data(args.embedding, args.embedding_level, args.model)
     train_data, valid_data, test_data = wrap_data(x_train, y_train, x_val, y_val, x_test, y_test)
-
+    input_shape = tuple([BATCH_SIZE] + list(np.array(x_train).shape)[1:])
     if args.model == 'CNN':
-        model = WordLevelCNN(input_shape=np.array(x_train).shape)
+        if args.embedding_level == 'word':
+            model = WordLevelCNN(input_shape=input_shape)
+        else:
+            model = CharacterLevelCNN(input_shape=input_shape)
     if args.model == 'logistic_regression':
-        model = LogisticRegression(input_shape=np.array(x_train).shape, n_class=4)
+        model = LogisticRegression(input_shape=input_shape)
 
     criterion = torch.nn.CrossEntropyLoss()
     scheduler = None
