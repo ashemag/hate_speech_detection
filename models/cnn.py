@@ -169,6 +169,7 @@ class CharacterCNN(Network):
             if i > 0:
                 # to give every layer access to all prev layers (DenseNet connectivity)
                 out = torch.cat(context_list, dim=1)
+
             dilation = int(DILATION_PARAM**i)
             # dilation = 1
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
