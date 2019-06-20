@@ -7,15 +7,15 @@ NUM_LAYERS = 1
 
 
 class LogisticRegression(Network):
-    def __init__(self, input_shape, n_class):
+    def __init__(self, input_shape, num_output_classes):
         super(LogisticRegression, self).__init__()
-        self.num_output_classes = n_class
+        self.num_output_classes = num_output_classes
         self.layer_dict = nn.ModuleDict()
         self.input_shape = input_shape
         self.build_module()
 
     def build_module(self):
-        x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
+        x = torch.zeros(self.input_shape)  # create dummy inputs to be used to infer shapes of layers
         out = x
         print('input shape is ', out.shape)
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)

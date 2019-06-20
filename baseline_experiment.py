@@ -115,6 +115,7 @@ def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
 
 
 if __name__ == "__main__":
+    label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
     args = get_args()
     x_train, y_train, x_val, y_val, x_test, y_test = extract_data(args.embedding, args.embedding_level, args.model)
     train_data, valid_data, test_data = wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, args.seed)
@@ -126,7 +127,7 @@ if __name__ == "__main__":
         else:
             model = CharacterLevelCNN(input_shape=input_shape)
     if args.model == 'logistic_regression':
-        model = LogisticRegression(input_shape=input_shape)
+        model = LogisticRegression(input_shape=input_shape, num_output_classes=len(label_mapping))
 
     criterion = torch.nn.CrossEntropyLoss()
     scheduler = None
@@ -147,7 +148,7 @@ if __name__ == "__main__":
         optimizer=optimizer,
         results_dir=results_dir,
         scheduler=scheduler,
-        label_mapping={0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'},
+        label_mapping=label_mapping,
         criterion=criterion
     )
 

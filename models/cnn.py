@@ -148,7 +148,7 @@ class CharacterCNN(Network):
 
         ### CHARACTER EMBEDDING: embedded doc shape (58358, 17, 10, 69)
         out = out.reshape((x.shape[0]*x.shape[1], x.shape[2], x.shape[3]))
-        
+        out = out.permute([0, 1, 3, 2])
         self.layer_dict['conv_{}'.format('char')] = nn.Conv1d(in_channels=out.shape[1],
                                                               kernel_size=3,
                                                               out_channels=self.num_filters,
@@ -205,6 +205,7 @@ class CharacterCNN(Network):
         """
         out = x
         out = out.reshape((x.shape[0]*x.shape[1], x.shape[2], x.shape[3]))
+        out = out.permute([0, 1, 3, 2])
         out = self.layer_dict['conv_{}'.format('char')](out)
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.reshape((x.shape[0], x.shape[1], self.num_filters))
@@ -245,4 +246,4 @@ def WordLevelCNN(input_shape):
 
 
 def CharacterLevelCNN(input_shape):
-    return CharacterCNN(num_output_classes=4, num_filters=64, num_layers=3, input_shape=input_shape)
+    return CharacterCNN(num_output_classes=4, num_filters=8, num_layers=3, input_shape=input_shape)
