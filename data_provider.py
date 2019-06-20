@@ -200,7 +200,6 @@ class LogisticRegressionDataProvider(object):
         x_tfidf_train = vectorizer.fit_transform(x_train).todense()
         x_tfidf_val = vectorizer.transform(x_val).todense()
         x_tfidf_test = vectorizer.transform(x_test).todense()
-        print(x_tfidf_train.shape)
         return x_tfidf_train, y_train, x_tfidf_val, y_val, x_tfidf_test, y_test
 
 

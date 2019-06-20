@@ -5,9 +5,7 @@ from models import storage_utils
 from tqdm import tqdm
 import sys
 from collections import OrderedDict
-import torch.nn as nn
 from collections import defaultdict
-import pickle
 import warnings
 from sklearn.metrics import f1_score
 
@@ -238,8 +236,6 @@ class Network(torch.nn.Module):
 
             output[type_key + '_acc_class_' + class_key] = acc_min
             output[type_key + '_loss_class_' + class_key] = loss_min
-            # _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
-            # output[type_key + '_f_score_' + class_key] = f1_score(y_all.cpu().detach().numpy(), y_pred_all_int.cpu().detach().numpy(), average="macro")
 
     def train_iteration(self, x_all, y_all, label_mapping):
         self.train()

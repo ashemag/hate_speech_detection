@@ -98,18 +98,18 @@ def extract_data(embedding_key, embedding_level_key, model):
         return LogisticRegressionDataProvider().extract(FILENAME, FILENAME_LABELS)
 
 
-def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test):
+def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
     # WRAP IN DP
     trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=BATCH_SIZE, make_one_hot=False,
-                            seed=args.seed)
+                            seed=seed)
     train_data = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
     validset = DataProvider(inputs=np.array(x_val), targets=np.array(y_val), batch_size=100, make_one_hot=False,
-                            seed=args.seed)
+                            seed=seed)
     valid_data = torch.utils.data.DataLoader(validset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
     testset = DataProvider(inputs=np.array(x_test), targets=np.array(y_test), batch_size=100, make_one_hot=False,
-                           seed=args.seed)
+                           seed=seed)
     test_data = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
     return train_data, valid_data, test_data
 
@@ -117,8 +117,9 @@ def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test):
 if __name__ == "__main__":
     args = get_args()
     x_train, y_train, x_val, y_val, x_test, y_test = extract_data(args.embedding, args.embedding_level, args.model)
-    train_data, valid_data, test_data = wrap_data(x_train, y_train, x_val, y_val, x_test, y_test)
+    train_data, valid_data, test_data = wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, args.seed)
     input_shape = tuple([BATCH_SIZE] + list(np.array(x_train).shape)[1:])
+
     if args.model == 'CNN':
         if args.embedding_level == 'word':
             model = WordLevelCNN(input_shape=input_shape)
@@ -136,7 +137,7 @@ if __name__ == "__main__":
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=0.0001)
 
     # OUTPUT
-    results_dir = os.path.join(ROOT_DIR, 'results/{}').format(args.name)
+    results_dir = os.path.join(ROOT_DIR, 'results/{}').format(args.model + '_' + args.name)
     start = time.time()
     bpm = model.train_evaluate(
         train_set=train_data,
