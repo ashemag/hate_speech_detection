@@ -74,7 +74,11 @@ def extract_data(embedding_key, embedding_level_key, model):
 
 
 def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
-    # WRAP IN DP
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=BATCH_SIZE, make_one_hot=False,
                             seed=seed)
     train_data = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
