@@ -15,7 +15,7 @@ import pandas as pd
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
 TWEET_SENTENCE_SIZE = 17  # 16 is average tweet token length
-TWEET_WORD_SIZE = 40 # selected by histogram of tweet counts
+TWEET_WORD_SIZE = 10 # selected by histogram of tweet counts
 EMBED_DIM = 200
 NUM_CLASSES = 4
 

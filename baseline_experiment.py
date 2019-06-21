@@ -10,6 +10,7 @@ from data_provider import *
 import pickle
 import os
 from models.logistic_regression import LogisticRegression
+from utils import prepare_output_file
 
 # PARAMS
 BATCH_SIZE = 64
@@ -30,7 +31,7 @@ def get_args():
     parser.add_argument('--cpu', type=bool, default=False)
     parser.add_argument('--model', type=str, default='CNN')
     parser.add_argument('--name', type=str, default='CNN_Experiment')
-    parser.add_argument('--embedding', type=str, default='N/A')
+    parser.add_argument('--embedding', type=str, default='NA')
     parser.add_argument('--embedding_level', type=str, default='word')
 
     args = parser.parse_args()
@@ -39,32 +40,6 @@ def get_args():
         arg_str = [(str(key), str(value)) for (key, value) in vars(args).items()]
         print(arg_str)
     return args
-
-
-def prepare_output_file(filename, output=None, clean_flag=False):
-    """
-
-    :param filename:
-    :param output: dictionary to write to csv
-    :param clean_flag: bool to delete existing dictionary
-    :return:
-    """
-    file_exists = os.path.isfile(filename)
-    if clean_flag:
-        if file_exists:
-            os.remove(filename)
-    else:
-        if output is None:
-            raise ValueError("Please specify output to write to output file.")
-
-        with open(filename, 'a') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=list(output.keys()))
-            if not file_exists:
-                writer.writeheader()
-            if VERBOSE:
-                print("Writing to file {0}".format(filename))
-                print(output)
-            writer.writerow(output)
 
 
 def extract_data(embedding_key, embedding_level_key, model):

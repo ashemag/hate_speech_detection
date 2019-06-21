@@ -4,10 +4,13 @@ Helpers for tweet extraction/processing
 import csv
 import json
 from collections import Counter
-
+import os
 from sklearn.model_selection import train_test_split
 import numpy as np
 from preprocessor import Preprocessor
+
+
+VERBOSE = True
 
 
 def split_data(x, y):
@@ -96,3 +99,29 @@ def extract_tweets(data, filename, subset=None):
     print("Average {} is {}".format('retweet count', int(np.mean(retweet_count))))
     print("Average {} is {}".format('follower count', int(np.median(followers_count))))
     return tweets, labels
+
+
+def prepare_output_file(filename, output=None, clean_flag=False):
+    """
+
+    :param filename:
+    :param output: dictionary to write to csv
+    :param clean_flag: bool to delete existing dictionary
+    :return:
+    """
+    file_exists = os.path.isfile(filename)
+    if clean_flag:
+        if file_exists:
+            os.remove(filename)
+    else:
+        if output is None:
+            raise ValueError("Please specify output to write to output file.")
+
+        with open(filename, 'a') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=list(output.keys()))
+            if not file_exists:
+                writer.writeheader()
+            if VERBOSE:
+                print("Writing to file {0}".format(filename))
+                print(output)
+            writer.writerow(output)
