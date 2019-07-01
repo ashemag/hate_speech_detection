@@ -104,6 +104,7 @@ if __name__ == "__main__":
         if args.embedding_level == 'word':
             model = WordLevelCNN(input_shape=input_shape)
         else:
+            print("input_shape")
             model = CharacterLevelCNN(input_shape=input_shape)
     if args.model == 'logistic_regression':
         model = LogisticRegression(input_shape=input_shape, num_output_classes=len(label_mapping))

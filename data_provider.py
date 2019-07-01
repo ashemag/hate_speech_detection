@@ -15,7 +15,8 @@ import pandas as pd
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
 TWEET_SENTENCE_SIZE = 17  # 16 is average tweet token length
-TWEET_WORD_SIZE = 10 # selected by histogram of tweet counts
+TWEET_WORD_SIZE = 20 # selected by histogram of tweet counts
+FASTTEXT_EMBED_DIM = 300
 EMBED_DIM = 200
 NUM_CLASSES = 4
 
@@ -214,6 +215,9 @@ class CNNTextDataProvider(object):
         elif key == 'twitter':
             embed_dim = TWITTER_EMBED_DIM
             filename = 'data/word2vec_twitter_model/word2vec_twitter_model.bin'
+            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
+        elif key == 'fastttext':
+            filename = 'data/wiki-news-300d-1M-subword.vec'
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         else:
             filename = 'data/keyedvectors.bin'
