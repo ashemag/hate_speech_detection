@@ -1,10 +1,10 @@
+from comet_ml import Experiment
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.base import Network
 
 DILATION_PARAM = 1.4
-CHARACTER_LAYERS = 2
 WEIGHT_DECAY = 1e-4
 
 
@@ -45,7 +45,7 @@ class CNN(Network):
         print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
 
         context_list = []
-        for i in range(5):  # for number of layers times
+        for i in range(self.num_layers):  # for number of layers times
             if i > 0:
                 # to give every layer access to all prev layers (DenseNet connectivity)
                 out = torch.cat(context_list, dim=1)
@@ -54,13 +54,15 @@ class CNN(Network):
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
                                                              # add a conv layer in the module dict
                                                              kernel_size=3,
-                                                             out_channels=self.num_filters, padding=dilation,
-                                                             bias=False, dilation=dilation)
+                                                             out_channels=self.num_filters,
+                                                             padding=dilation,
+                                                             bias=False,
+                                                             dilation=dilation)
 
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
             self.layer_dict['batch_norm_{}'.format(i)] = nn.BatchNorm1d(num_features=out.shape[1])
             out = self.layer_dict['batch_norm_{}'.format(i)](out)
-            out = F.leaky_relu(out)  # apply relu
+            out = F.leaky_relu(out)
             out = self.drop(out)
             context_list.append(out)
 
@@ -85,7 +87,7 @@ class CNN(Network):
         out = x
         out = out.permute([0, 2, 1])
         context_list = []
-        for i in range(5):  # for number of layers times
+        for i in range(self.num_layers):  # for number of layers times
             if i > 0:
                 out = torch.cat(context_list, dim=1)
 
@@ -115,7 +117,7 @@ class CNN(Network):
         self.logit_linear_layer.reset_parameters()
 
 class CharacterCNN(Network):
-    def __init__(self, input_shape, num_output_classes, num_filters, num_layers, kernel_size=3, use_bias=False):
+    def __init__(self, input_shape, num_output_classes, num_filters_character, num_filters, num_layers, kernel_size=3, use_bias=False):
         """
         Initializes a convolutional network module object.
         :param input_shape: The shape of the inputs going in to the network.
@@ -132,8 +134,10 @@ class CharacterCNN(Network):
         self.num_output_classes = num_output_classes
         self.use_bias = use_bias
         self.num_layers = num_layers
-        self.drop = nn.Dropout(p=0.5, inplace=False)
+        self.num_filters_character = num_filters_character
+        self.drop = nn.Dropout(p=0.0, inplace=False)
         self.kernel_size = kernel_size
+        self.num_character_layers = 3
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
 
@@ -151,33 +155,30 @@ class CharacterCNN(Network):
         out = out.reshape((x.shape[0]*x.shape[1], x.shape[2], x.shape[3]))
 
         ### CHARACTER EMBEDDING: embedded doc shape (58358, 17, 10, 69)
-        for i in range(CHARACTER_LAYERS):
+        for i in range(self.num_character_layers):
             self.layer_dict['conv_{}_{}'.format('char', i)] = nn.Conv1d(in_channels=out.shape[1],
                                                                   kernel_size=self.kernel_size,
-                                                                  out_channels=self.num_filters,
+                                                                  out_channels=self.num_filters_character,
                                                                   padding=1,
                                                                   bias=False,
                                                                   dilation=1)
-
+            prev_out = out
             out = self.layer_dict['conv_{}_{}'.format('char', i)](out)
+            self.layer_dict['bn_{}_{}'.format('char', i)] = nn.BatchNorm1d(num_features=out.shape[1])
+            out = self.layer_dict['bn_{}_{}'.format('char', i)](out)
             out = F.leaky_relu(out)  # apply relu
+            out = torch.cat((prev_out, out), dim=1) #each layer has access to features before it, gradient props more efficiently
+            out = F.avg_pool1d(out, 2)
 
         out = F.avg_pool1d(out, out.shape[-1])
         print(out.shape)
-        # torch.Size([634916, 64, 1])
-        # out shape (58358, 17, 10)
 
-        out = out.reshape((x.shape[0], x.shape[1], self.num_filters))
+        out = out.reshape((x.shape[0], x.shape[1], out.shape[1]))
         out = out.permute([0, 2, 1])
         print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
-        context_list = []
-        for i in range(5):  # for number of layers times
-            if i > 0:
-                # to give every layer access to all prev layers (DenseNet connectivity)
-                out = torch.cat(context_list, dim=1)
-
+        for i in range(self.num_layers):  # for number of layers times
+            prev_out = out
             dilation = int(DILATION_PARAM**i)
-            #dilation = 1
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
                                                              kernel_size=self.kernel_size,
                                                              out_channels=self.num_filters,
@@ -190,12 +191,10 @@ class CharacterCNN(Network):
             out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)  # apply relu
             out = self.drop(out)
-            context_list.append(out)
+            out = torch.cat((prev_out, out), dim=1)
 
-        out = torch.cat(context_list, dim=1)
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
-
         self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
                                             out_features=self.num_output_classes,
                                             bias=self.use_bias)
@@ -214,26 +213,26 @@ class CharacterCNN(Network):
         out = out.permute([0, 1, 3, 2])
         out = out.reshape((x.shape[0]*x.shape[1], x.shape[2], x.shape[3]))
 
-        for i in range(CHARACTER_LAYERS):
-            out = self.layer_dict['conv_{}_{}'.format('char',i)](out)
-            out = F.leaky_relu(out)
+        for i in range(self.num_character_layers):
+            prev_out = out
+            out = self.layer_dict['conv_{}_{}'.format('char', i)](out)
+            out = self.layer_dict['bn_{}_{}'.format('char', i)](out)
+            out = F.leaky_relu(out)  # apply relu
+            out = torch.cat((prev_out, out), dim=1)
+            out = F.avg_pool1d(out, 2)
 
         out = F.avg_pool1d(out, out.shape[-1])
-        out = out.reshape((x.shape[0], x.shape[1], self.num_filters))
+        out = out.reshape((x.shape[0], x.shape[1], out.shape[1]))
         out = out.permute([0, 2, 1])
 
-        context_list = []
-        for i in range(5):  # for number of layers times
-            if i > 0:
-                out = torch.cat(context_list, dim=1)
-
+        for i in range(self.num_layers):  # for number of layers times
+            prev_out = out
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
             out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)
             out = self.drop(out)
-            context_list.append(out)
+            out = torch.cat((prev_out, out), dim=1)
 
-        out = torch.cat(context_list, dim=1)
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
@@ -266,6 +265,7 @@ def word_cnn(input_shape):
 
 def character_cnn(input_shape):
     model = CharacterCNN(num_output_classes=4,
+                         num_filters_character=4,
                          num_filters=8,
                          num_layers=3,
                          kernel_size=3,

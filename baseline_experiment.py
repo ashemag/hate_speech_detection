@@ -1,6 +1,7 @@
 """
 Runs baseline experiments
 """
+from comet_ml import Experiment
 import argparse
 import time
 from torch import optim
@@ -71,15 +72,24 @@ def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    trainset = DataProvider(inputs=np.array(x_train), targets=np.array(y_train), batch_size=BATCH_SIZE, make_one_hot=False,
+    trainset = DataProvider(inputs=np.array(x_train),
+                            targets=np.array(y_train),
+                            batch_size=BATCH_SIZE,
+                            make_one_hot=False,
                             seed=seed)
     train_data = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
-    validset = DataProvider(inputs=np.array(x_val), targets=np.array(y_val), batch_size=100, make_one_hot=False,
+    validset = DataProvider(inputs=np.array(x_val),
+                            targets=np.array(y_val),
+                            batch_size=BATCH_SIZE,
+                            make_one_hot=False,
                             seed=seed)
     valid_data = torch.utils.data.DataLoader(validset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
-    testset = DataProvider(inputs=np.array(x_test), targets=np.array(y_test), batch_size=100, make_one_hot=False,
+    testset = DataProvider(inputs=np.array(x_test),
+                           targets=np.array(y_test),
+                           batch_size=BATCH_SIZE,
+                           make_one_hot=False,
                            seed=seed)
     test_data = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
     return train_data, valid_data, test_data

@@ -274,7 +274,6 @@ class CNNTextDataProvider(object):
                     embedded_tweet.append(random_word)
 
             processed_tweets.append(np.array(embedded_tweet))
-
         print("embedded doc shape {}".format(np.array(processed_tweets).shape))
         return processed_tweets
 
@@ -309,7 +308,6 @@ class CNNTextDataProvider(object):
         if embedding_level_key == 'word':
             raw_tweets = self.tokenize(raw_tweets)
             x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels)
-            print("Hateful tweets in train set are {} of {}".format(y_train.count(0), len(y_train)))
             word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
             processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
         else: # CHAR

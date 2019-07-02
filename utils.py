@@ -15,7 +15,11 @@ VERBOSE = True
 
 def split_data(x, y):
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.2, random_state=1)
-    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=1)
+
+    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.1, random_state=1)
+    print("Hateful in train: {}, hateful in val: {}, hateful in test: {}".format(y_train.count(0)/len(y_train),
+                                                                                 y_val.count(0)/len(y_val),
+                                                                                 y_test.count(0)/len(y_test)))
     return x_train, y_train, x_val, y_val, x_test, y_test
 
 
@@ -37,7 +41,6 @@ def process_text(text):
     p = Preprocessor()
     p.clean(text)
     p.tokenize()
-    chars = []
     return p.text, p.tokens
 
 

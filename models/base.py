@@ -1,5 +1,5 @@
+from comet_ml import Experiment
 import numpy as np
-import torch
 import os
 from models import storage_utils
 from tqdm import tqdm
@@ -8,10 +8,14 @@ from collections import OrderedDict
 from collections import defaultdict
 import warnings
 from sklearn.metrics import f1_score
+import torch
+
 
 # remove warning for f-score, precision, recall
 def warn(*args, **kwargs):
     pass
+
+
 warnings.warn = warn
 
 
@@ -94,7 +98,8 @@ class Network(torch.nn.Module):
                        criterion=torch.nn.CrossEntropyLoss(), label_mapping=None, scheduler=None):
 
         # SET OUTPUT PATH
-        if not os.path.exists(results_dir): os.makedirs(results_dir)
+        if not os.path.exists(results_dir):
+            os.makedirs(results_dir)
         train_results_path = os.path.join(results_dir, 'train_results.txt')
         valid_and_test_results_path = os.path.join(results_dir, 'valid_and_test_results.txt')
         model_save_dir = os.path.join(results_dir, 'model')
@@ -105,29 +110,31 @@ class Network(torch.nn.Module):
         self.num_epochs = num_epochs
         self.optimizer = optimizer
         self.criterion = criterion
+        self.experiment = Experiment(project_name=results_dir.split('/')[-1], workspace="ashemag")
 
         if scheduler is not None:
             self.scheduler = scheduler
 
         def train_epoch(current_epoch):
             batch_statistics = defaultdict(lambda: [])
-            with tqdm(total=len(train_set)) as pbar_val:
-                for i, batch in enumerate(train_set):
-                    x, y = batch
-                    if gpu:
-                        x = x.to(device=self.device)
-                        y = y.to(device=self.device)
+            with self.experiment.train():
+                with tqdm(total=len(train_set)) as pbar_train:
+                    for i, batch in enumerate(train_set):
+                        x, y = batch
+                        if gpu:
+                            x = x.to(device=self.device)
+                            y = y.to(device=self.device)
 
-                    output = self.train_iteration(x, y, label_mapping)
-                    # SAVE BATCH STATS
-                    for key, value, in output.items():
-                        batch_statistics[key].append(output[key].item())
-
-                    # SET PBAR
-                    string_description = " ".join(
-                        ["{}:{:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
-                    pbar_val.update(1)
-                    # pbar_val.set_description(string_description)
+                        output = self.train_iteration(x, y, label_mapping)
+                        # SAVE BATCH STATS
+                        for key, value, in output.items():
+                            batch_statistics[key].append(output[key].item())
+                            self.experiment.log_metric(key, output[key].item())
+                        # SET PBAR
+                        string_description = " ".join(
+                            ["{}:{:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
+                        pbar_train.update(1)
+                        # pbar_val.set_description(string_description)
 
             epoch_stats = OrderedDict({})
             epoch_stats['current_epoch'] = current_epoch
@@ -137,40 +144,43 @@ class Network(torch.nn.Module):
 
         def test_epoch(current_epoch):
             batch_statistics = defaultdict(lambda: [])
+            with self.experiment.validate():
+                with tqdm(total=len(valid_full)) as pbar_val:
+                    for i, batch in enumerate(valid_full):
+                        x_all, y_all = batch
+                        if gpu:
+                            x_all = x_all.to(device=self.device)
+                            y_all = y_all.to(device=self.device)
+                        output = self.valid_iteration('valid', x_all, y_all, label_mapping)
 
-            with tqdm(total=len(valid_full)) as pbar_val:
-                for i, batch in enumerate(valid_full):
-                    x_all, y_all = batch
-                    if gpu:
-                        x_all = x_all.to(device=self.device)
-                        y_all = y_all.to(device=self.device)
-                    output = self.valid_iteration('valid', x_all, y_all, label_mapping)
+                        # SAVE BATCH STATS
+                        for key, value, in output.items():
+                            batch_statistics[key].append(output[key].item())
+                            self.experiment.log_metric(key, output[key].item())
 
-                    # SAVE BATCH STATS
-                    for key, value, in output.items():
-                        batch_statistics[key].append(output[key].item())
+                        string_description = " ".join(["{}:{:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
+                        pbar_val.update(1)
+                        # pbar_val.set_description(string_description)
 
-                    string_description = " ".join(["{}:{:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
-                    pbar_val.update(1)
-                    # pbar_val.set_description(string_description)
+            with self.experiment.test():
+                with tqdm(total=len(test_full)) as pbar_test:
+                    for i, batch in enumerate(test_full):
+                        x_all, y_all = batch
+                        if gpu:
+                            x_all = x_all.to(device=self.device)
+                            y_all = y_all.to(device=self.device)
 
-            with tqdm(total=len(test_full)) as pbar_test:
-                for i, batch in enumerate(test_full):
-                    x_all, y_all = batch
-                    if gpu:
-                        x_all = x_all.to(device=self.device)
-                        y_all = y_all.to(device=self.device)
+                        output = self.valid_iteration('test', x_all, y_all, label_mapping)
 
-                    output = self.valid_iteration('test', x_all, y_all, label_mapping)
+                        # SAVE BATCH STATS
+                        for key, value, in output.items():
+                            batch_statistics[key].append(output[key].item())
+                            self.experiment.log_metric(key, output[key].item())
 
-                    # SAVE BATCH STATS
-                    for key, value, in output.items():
-                        batch_statistics[key].append(output[key].item())
-
-                    string_description = " ".join(
-                        ["{}: {:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
-                    pbar_test.update(1)
-                    # pbar_test.set_description(string_description)
+                        string_description = " ".join(
+                            ["{}: {:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
+                        pbar_test.update(1)
+                        # pbar_test.set_description(string_description)
 
             epoch_stats = OrderedDict({})
             epoch_stats['current_epoch'] = current_epoch

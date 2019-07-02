@@ -19,27 +19,32 @@ class LogisticRegression(Network):
         x = torch.zeros(self.input_shape)  # create dummy inputs to be used to infer shapes of layers
         out = x
         print('[Build module] Initial input shape is {}'.format(out.shape))
-        out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
+        print(out.shape)
         for i in range(self.num_layers):
             self.layer_dict['linear_{}'.format(i)] = nn.Linear(out.shape[1], self.num_output_classes)
             out = self.layer_dict['linear_{}'.format(i)](out)
+            out = F.leaky_relu(out)
 
-        out = F.sigmoid(out)
+        # make linear
+        self.layer_dict['linear_{}'.format('final')] = nn.Linear(out.shape[1], self.num_output_classes)
+        out = self.layer_dict['linear_{}'.format('final')](out)
         print("[Build module] Final output shape is {}".format(out.shape))
         return out
 
     def forward(self, x):
         out = x
-        out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         for i in range(self.num_layers):
             out = self.layer_dict['linear_{}'.format(i)](out)
+            out = F.leaky_relu(out)
 
-        out = F.sigmoid(out)
+        # make linear
+        out = self.layer_dict['linear_{}'.format('final')](out)
         return out
 
 
 def logistic_regression(input_shape, num_output_classes):
     model = LogisticRegression(input_shape, num_output_classes, num_layers=1)
     criterion = torch.nn.CrossEntropyLoss()
+    #optimizer = torch.optim.SGD(model.parameters(), lr=1e-4, momentum=0.9)
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
     return model, criterion, optimizer

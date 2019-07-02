@@ -66,3 +66,5 @@ data/
 scripts*
 *.csv
 *results*
+.comet.config
+.DS_Store
