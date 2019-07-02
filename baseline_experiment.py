@@ -9,12 +9,11 @@ from models.cnn import *
 from data_provider import *
 import pickle
 import os
-from models.logistic_regression import LogisticRegression
+from models.logistic_regression import logistic_regression
 from utils import prepare_output_file
 
 # PARAMS
 BATCH_SIZE = 64
-WEIGHT_DECAY = 1e-4
 VERBOSE = True
 FILENAME = 'data/80k_tweets.json'
 FILENAME_LABELS = 'data/labels.csv'
@@ -22,7 +21,7 @@ FILENAME_LABELS = 'data/labels.csv'
 
 def get_args():
     """
-    TO parse user parameters
+    To parse user parameters
     :return:
     """
     parser = argparse.ArgumentParser(description='CNN Hate Speech Detection Experiment.')
@@ -32,22 +31,15 @@ def get_args():
     parser.add_argument('--model', type=str, default='CNN')
     parser.add_argument('--name', type=str, default='CNN_Experiment')
     parser.add_argument('--embedding', type=str, default='NA')
-    parser.add_argument('--embedding_level', type=str, default='word')
-
-    args = parser.parse_args()
+    parser.add_argument('--embedding_level', type=str, default='NA')
 
     if VERBOSE:
-        arg_str = [(str(key), str(value)) for (key, value) in vars(args).items()]
+        arg_str = [(str(key), str(value)) for (key, value) in vars(parser.parse_args()).items()]
         print(arg_str)
-    return args
+    return parser.parse_args()
 
 
 def extract_data(embedding_key, embedding_level_key, model):
-    """
-    To get training/valid/test data
-    :param key: True if data is saved and can pull from /data
-    :return:
-    """
     if model == 'CNN':
         saved_flag = False
         if not saved_flag:
@@ -93,29 +85,27 @@ def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
     return train_data, valid_data, test_data
 
 
+def fetch_model(args, shape, num_output_classes):
+    switcher = {
+        'CNN_word': word_cnn(input_shape=shape),
+        'CNN_character': character_cnn(input_shape=shape),
+        'logistic_regression_NA': logistic_regression(input_shape=shape, num_output_classes=num_output_classes)
+    }
+    model_local, criterion_local, optimizer_local = switcher[args.model + '_' + args.embedding_level]
+    if not args.cpu:
+        model_local = model_local.to(model_local.device)
+
+    scheduler_local = optim.lr_scheduler.CosineAnnealingLR(optimizer_local, T_max=args.num_epochs, eta_min=0.0001)
+    return model_local, criterion_local, optimizer_local, scheduler_local
+
+
 if __name__ == "__main__":
     label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
     args = get_args()
     x_train, y_train, x_val, y_val, x_test, y_test = extract_data(args.embedding, args.embedding_level, args.model)
     train_data, valid_data, test_data = wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, args.seed)
     input_shape = tuple([BATCH_SIZE] + list(np.array(x_train).shape)[1:])
-
-    if args.model == 'CNN':
-        if args.embedding_level == 'word':
-            model = WordLevelCNN(input_shape=input_shape)
-        else:
-            print("input_shape")
-            model = CharacterLevelCNN(input_shape=input_shape)
-    if args.model == 'logistic_regression':
-        model = LogisticRegression(input_shape=input_shape, num_output_classes=len(label_mapping))
-
-    criterion = torch.nn.CrossEntropyLoss()
-    scheduler = None
-
-    if not args.cpu:
-        model = model.to(model.device)
-    optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=0.0001)
+    model, criterion, optimizer, scheduler = fetch_model(args, input_shape, len(label_mapping))
 
     # OUTPUT
     results_dir = os.path.join(ROOT_DIR, 'results/{}').format(args.model + '_' + args.name)

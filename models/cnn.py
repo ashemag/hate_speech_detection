@@ -5,6 +5,8 @@ from models.base import Network
 
 DILATION_PARAM = 1.4
 CHARACTER_LAYERS = 2
+WEIGHT_DECAY = 1e-4
+
 
 class CNN(Network):
     def __init__(self, input_shape, dim_reduction_type, num_output_classes, num_filters, num_layers, use_bias=False):
@@ -251,9 +253,15 @@ class CharacterCNN(Network):
         self.logit_linear_layer.reset_parameters()
 
 
-def WordLevelCNN(input_shape):
-    return CNN(num_output_classes=4, num_filters=64, num_layers=3, dim_reduction_type='max_pooling', input_shape=input_shape)
+def word_cnn(input_shape):
+    model = CNN(num_output_classes=4, num_filters=64, num_layers=3, dim_reduction_type='max_pooling', input_shape=input_shape)
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
+    return model, criterion, optimizer
 
 
-def CharacterLevelCNN(input_shape):
-    return CharacterCNN(num_output_classes=4, num_filters=8, num_layers=3, kernel_size=3, input_shape=input_shape)
+def character_cnn(input_shape):
+    model = CharacterCNN(num_output_classes=4, num_filters=8, num_layers=3, kernel_size=3, input_shape=input_shape)
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
+    return model, criterion, optimizer

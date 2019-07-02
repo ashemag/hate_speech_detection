@@ -3,15 +3,16 @@ import torch.nn as nn
 from models.base import Network
 import torch.nn.functional as F
 
-NUM_LAYERS = 1
+WEIGHT_DECAY = 1e-4
 
 
 class LogisticRegression(Network):
-    def __init__(self, input_shape, num_output_classes):
+    def __init__(self, input_shape, num_output_classes, num_layers):
         super(LogisticRegression, self).__init__()
         self.num_output_classes = num_output_classes
         self.layer_dict = nn.ModuleDict()
         self.input_shape = input_shape
+        self.num_layers = num_layers
         self.build_module()
 
     def build_module(self):
@@ -19,18 +20,25 @@ class LogisticRegression(Network):
         out = x
         print('input shape is ', out.shape)
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
-        for i in range(NUM_LAYERS):
+        for i in range(self.num_layers):
             self.layer_dict['linear_{}'.format(i)] = nn.Linear(out.shape[1], self.num_output_classes)
             out = self.layer_dict['linear_{}'.format(i)](out)
 
-        out = F.relu(out)
+        out = F.sigmoid(out)
         return out
 
     def forward(self, x):
         out = x
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
-        for i in range(NUM_LAYERS):
+        for i in range(self.num_layers):
             out = self.layer_dict['linear_{}'.format(i)](out)
 
-        out = F.relu(out)
+        out = F.sigmoid(out)
         return out
+
+
+def logistic_regression(input_shape, num_output_classes):
+    model = LogisticRegression(input_shape, num_output_classes, num_layers=1)
+    criterion = torch.nn.BCELoss(size_average=True)
+    optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
+    return model, criterion, optimizer

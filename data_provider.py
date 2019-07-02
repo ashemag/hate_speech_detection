@@ -197,7 +197,7 @@ class LogisticRegressionDataProvider(object):
         raw_tweets, labels = extract_tweets(data, filename_data)
         x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels)
 
-        vectorizer = TfidfVectorizer(use_idf=True, stop_words='english', max_features=10000)
+        vectorizer = TfidfVectorizer(use_idf=True, max_features=10000, stop_words='english')
         x_tfidf_train = vectorizer.fit_transform(x_train).todense()
         x_tfidf_val = vectorizer.transform(x_val).todense()
         x_tfidf_test = vectorizer.transform(x_test).todense()
@@ -309,9 +309,11 @@ class CNNTextDataProvider(object):
         if embedding_level_key == 'word':
             raw_tweets = self.tokenize(raw_tweets)
             x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels)
+            print("Hateful tweets in train set are {} of {}".format(y_train.count(0), len(y_train)))
             word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
             processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
         else: # CHAR
             raw_tweets = self.tokenize(raw_tweets)
             processed_tweets = self.fetch_character_embeddings(raw_tweets)
         return split_data(processed_tweets, labels)
+
