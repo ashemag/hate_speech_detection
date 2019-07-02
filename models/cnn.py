@@ -254,14 +254,22 @@ class CharacterCNN(Network):
 
 
 def word_cnn(input_shape):
-    model = CNN(num_output_classes=4, num_filters=64, num_layers=3, dim_reduction_type='max_pooling', input_shape=input_shape)
+    model = CNN(num_output_classes=4,
+                num_filters=64,
+                num_layers=3,
+                dim_reduction_type='max_pooling',
+                input_shape=input_shape)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
     return model, criterion, optimizer
 
 
 def character_cnn(input_shape):
-    model = CharacterCNN(num_output_classes=4, num_filters=8, num_layers=3, kernel_size=3, input_shape=input_shape)
+    model = CharacterCNN(num_output_classes=4,
+                         num_filters=8,
+                         num_layers=3,
+                         kernel_size=3,
+                         input_shape=input_shape)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
     return model, criterion, optimizer

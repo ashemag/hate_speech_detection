@@ -85,13 +85,21 @@ def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
     return train_data, valid_data, test_data
 
 
-def fetch_model(args, shape, num_output_classes):
-    switcher = {
-        'CNN_word': word_cnn(input_shape=shape),
-        'CNN_character': character_cnn(input_shape=shape),
-        'logistic_regression_NA': logistic_regression(input_shape=shape, num_output_classes=num_output_classes)
-    }
-    model_local, criterion_local, optimizer_local = switcher[args.model + '_' + args.embedding_level]
+def fetch_model(key, input_shape, num_output_classes):
+    if key == 'CNN_word':
+        return word_cnn(input_shape)
+    elif key == 'CNN_character':
+        return character_cnn(input_shape)
+    elif key == 'logistic_regression_NA':
+        return logistic_regression(input_shape, num_output_classes)
+    else:
+        raise ValueError("Model key not found {}".format(key))
+
+
+def fetch_model_parameters(args, input_shape, num_output_classes):
+    model_local, criterion_local, optimizer_local = fetch_model(key=args.model + '_' + args.embedding_level,
+                                                                input_shape=input_shape,
+                                                                num_output_classes=num_output_classes)
     if not args.cpu:
         model_local = model_local.to(model_local.device)
 
@@ -105,7 +113,7 @@ if __name__ == "__main__":
     x_train, y_train, x_val, y_val, x_test, y_test = extract_data(args.embedding, args.embedding_level, args.model)
     train_data, valid_data, test_data = wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, args.seed)
     input_shape = tuple([BATCH_SIZE] + list(np.array(x_train).shape)[1:])
-    model, criterion, optimizer, scheduler = fetch_model(args, input_shape, len(label_mapping))
+    model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape, len(label_mapping))
 
     # OUTPUT
     results_dir = os.path.join(ROOT_DIR, 'results/{}').format(args.model + '_' + args.name)
