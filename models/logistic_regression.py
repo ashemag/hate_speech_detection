@@ -18,13 +18,14 @@ class LogisticRegression(Network):
     def build_module(self):
         x = torch.zeros(self.input_shape)  # create dummy inputs to be used to infer shapes of layers
         out = x
-        print('input shape is ', out.shape)
+        print('[Build module] Initial input shape is {}'.format(out.shape))
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         for i in range(self.num_layers):
             self.layer_dict['linear_{}'.format(i)] = nn.Linear(out.shape[1], self.num_output_classes)
             out = self.layer_dict['linear_{}'.format(i)](out)
 
         out = F.sigmoid(out)
+        print("[Build module] Final output shape is {}".format(out.shape))
         return out
 
     def forward(self, x):
@@ -39,6 +40,6 @@ class LogisticRegression(Network):
 
 def logistic_regression(input_shape, num_output_classes):
     model = LogisticRegression(input_shape, num_output_classes, num_layers=1)
-    criterion = torch.nn.BCELoss(size_average=True)
+    criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
     return model, criterion, optimizer
