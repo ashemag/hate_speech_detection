@@ -1,9 +1,8 @@
 """
 Runs baseline experiments
 """
-#from comet_ml import Experiment
+from comet_ml import Experiment
 import argparse
-import time
 from torch import optim
 from globals import ROOT_DIR
 from models.cnn import *
@@ -11,10 +10,8 @@ from data_providers import *
 import pickle
 import os
 from models.logistic_regression import logistic_regression
-from utils import prepare_output_file
 
 # PARAMS
-BATCH_SIZE = 64
 VERBOSE = True
 FILENAME = 'data/80k_tweets.json'
 FILENAME_LABELS = 'data/labels.csv'
@@ -33,6 +30,8 @@ def get_args():
     parser.add_argument('--name', type=str, default='CNN_Experiment')
     parser.add_argument('--embedding', type=str, default='NA')
     parser.add_argument('--embedding_level', type=str, default='NA')
+    parser.add_argument('--batch_size', type=str, default=64)
+
 
     if VERBOSE:
         arg_str = [(str(key), str(value)) for (key, value) in vars(parser.parse_args()).items()]
@@ -46,7 +45,7 @@ def extract_data(embedding_key, embedding_level_key, model):
         if not saved_flag:
             p = CNNTextDataProvider()
             x_train, y_train, x_val, y_val, x_test, y_test = p.extract(FILENAME, FILENAME_LABELS, embedding_key, embedding_level_key)
-            d = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test, 'y_test': y_test}
+            res = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test, 'y_test': y_test}
 
             # for key, value in d.items():
             #     path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(key))
@@ -58,15 +57,17 @@ def extract_data(embedding_key, embedding_level_key, model):
                 path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(val))
                 with open(path, 'rb') as f:
                     res.append(pickle.load(f))
-            x_train, y_train, x_val, y_val, x_test, y_test = res
         if VERBOSE:
-            print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(x_train), len(x_val), len(x_test)))
-        return x_train, y_train, x_val, y_val, x_test, y_test
+            print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(res['x_train']),
+                                                                                      len(res['x_val']),
+                                                                                      len(res['x_test'])
+                                                                                      ))
+        return res
     else:
         return LogisticRegressionDataProvider().extract(FILENAME, FILENAME_LABELS)
 
 
-def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
+def wrap_data(batch_size, seed, x_train, y_train, x_val, y_val, x_test, y_test):
     torch.manual_seed(seed)
     np.random.seed(seed)
     torch.backends.cudnn.deterministic = True
@@ -74,19 +75,19 @@ def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
 
     trainset = DataProvider(inputs=x_train, targets=y_train, seed=seed)
     train_data = torch.utils.data.DataLoader(trainset,
-                                             batch_size=BATCH_SIZE,
+                                             batch_size=batch_size,
                                              num_workers=2,
                                              sampler=ImbalancedDatasetSampler(trainset))
 
     validset = DataProvider(inputs=x_val, targets=y_val, seed=seed)
     valid_data = torch.utils.data.DataLoader(validset,
-                                             batch_size=BATCH_SIZE,
+                                             batch_size=batch_size,
                                              num_workers=2,
                                              sampler=ImbalancedDatasetSampler(validset))
 
     testset = DataProvider(inputs=x_test, targets=y_test, seed=seed)
     test_data = torch.utils.data.DataLoader(testset,
-                                            batch_size=BATCH_SIZE,
+                                            batch_size=batch_size,
                                             num_workers=2,
                                             sampler=ImbalancedDatasetSampler(testset))
 
@@ -118,9 +119,9 @@ def fetch_model_parameters(args, input_shape, num_output_classes):
 if __name__ == "__main__":
     label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
     args = get_args()
-    x_train, y_train, x_val, y_val, x_test, y_test = extract_data(args.embedding, args.embedding_level, args.model)
-    train_data, valid_data, test_data = wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, args.seed)
-    input_shape = tuple([BATCH_SIZE] + list(np.array(x_train).shape)[1:])
+    data = extract_data(args.embedding, args.embedding_level, args.model)
+    train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
+    input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
     model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape, len(label_mapping))
 
     # OUTPUT
@@ -128,21 +129,25 @@ if __name__ == "__main__":
     print("Writing to folder {}".format(folder_title))
     results_dir = os.path.join(ROOT_DIR, 'results/{}').format(folder_title)
     start = time.time()
+
+    hyper_params = {
+        'seed': args.seed,
+        'title': folder_title,
+        'label_mapping': label_mapping,
+        'results_dir': results_dir,
+        'criterion': criterion,
+        'scheduler': scheduler,
+        'num_epochs': args.num_epochs,
+        'optimizer': optimizer,
+        'batch_size': args.batch_size
+    }
+
     model.train_evaluate(
         train_data=train_data,
         valid_data=valid_data,
         test_data=test_data,
-        num_epochs=args.num_epochs,
-        optimizer=optimizer,
-        results_dir=results_dir,
-        scheduler=scheduler,
-        label_mapping=label_mapping,
-        criterion=criterion,
-        title=folder_title,
-        seed=args.seed
+        hyper_params=hyper_params
     )
 
     # SAVE RESULTS
     print("Total time (min): {}".format(round((time.time() - start) / float(60), 4)))
-   # results_dir_bpm = os.path.join(ROOT_DIR, '{}/{}.csv'.format(results_dir, title))
-   # prepare_output_file(output=bpm, filename=results_dir_bpm)

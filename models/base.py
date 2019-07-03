@@ -1,4 +1,4 @@
-#from comet_ml import Experiment
+from comet_ml import OfflineExperiment
 import numpy as np
 import os
 from models import storage_utils
@@ -45,6 +45,7 @@ class Network(torch.nn.Module):
         self.criterion = None
         self.scheduler = None
         self.gpu = True
+        self.state = dict()
 
         logger = Logger(stream=sys.stderr)
         logger.disable = False # if disabled does not print info messages.
@@ -166,64 +167,70 @@ class Network(torch.nn.Module):
     def log_to_comet(experiment, epoch, stats_to_log):
         for stats in stats_to_log:
             for k, v in stats.items():
-                experiment.log_metric(k, stats[k], step=epoch)
+                experiment.log_metric(name=k, value=stats[k], step=epoch)
 
-    def train_evaluate(self, train_data, valid_data, test_data, num_epochs, optimizer, results_dir,
-                       criterion, seed, title, label_mapping, scheduler=None):
+    def train_evaluate(self, train_data, valid_data, test_data, hyper_params):
+        logger = Logger(stream=sys.stderr, disable=False)
+        self.num_epochs = hyper_params['num_epochs']
+        self.optimizer = hyper_params['optimizer']
+        self.criterion = hyper_params['criterion']
+        self.scheduler = None
+        if 'scheduler' in hyper_params:
+            self.scheduler = hyper_params['scheduler']
 
-        # SET OUTPUT PATH
+        results_dir = hyper_params['results_dir']
         if not os.path.exists(results_dir):
             os.makedirs(results_dir)
-        train_results_path = os.path.join(results_dir, 'train_results_{}.csv'.format(seed))
-        valid_results_path = os.path.join(results_dir, 'valid_results_{}.csv'.format(seed))
+
+        # set output path
+        train_results_path = os.path.join(results_dir, 'train_results_{}.csv'.format(hyper_params['seed']))
+        valid_results_path = os.path.join(results_dir, 'valid_results_{}.csv'.format(hyper_params['seed']))
         test_results_path = os.path.join(results_dir, 'test_results.csv')
 
-        # SET LOGS
-        logger = Logger(stream=sys.stderr, disable=False)
-        self.state = dict()
-        self.num_epochs = num_epochs
-        self.optimizer = optimizer
-        self.criterion = criterion
+        experiment = OfflineExperiment(project_name=results_dir.split('/')[-1],
+                                       workspace="ashemag",
+                                       offline_directory=results_dir)
+        experiment.set_filename('experiment_{}'.format(hyper_params['seed']))
+        experiment.set_name('experiment_{}'.format(hyper_params['seed']))
 
-        if scheduler is not None:
-            self.scheduler = scheduler
-
-        #experiment = Experiment(project_name=results_dir.split('/')[-1], workspace="ashemag")
-
+        experiment.log_parameters(hyper_params)
         bpm = defaultdict(lambda: 0)
         torch.cuda.empty_cache()
         for epoch in range(1, int(self.num_epochs + 1)):
-            train_statistics = self._train_epoch(epoch, train_data, label_mapping, self.gpu)
-            valid_statistics = self._valid_epoch(epoch, valid_data, label_mapping, self.gpu)
+            train_statistics = self._train_epoch(epoch, train_data, hyper_params['label_mapping'], self.gpu)
+            valid_statistics = self._valid_epoch(epoch, valid_data, hyper_params['label_mapping'], self.gpu)
 
-            #self.log_to_comet(experiment, current_epoch, [train_statistics_to_save, valid_statistics_to_save])
+            self.log_to_comet(experiment, epoch, [train_statistics, valid_statistics])
+            # Step
+            if self.scheduler is not None:
+                self.scheduler.step()
+            for param_group in self.optimizer.param_groups:
+                learning_rate = param_group['lr']
+                logger.print('=== Learning rate: {} ==='.format(learning_rate))
+                train_statistics['learning_rate'] = learning_rate
 
             # save bpm statistics
-            if (valid_statistics['valid_acc_class_hateful'] + valid_statistics['valid_acc_class_abusive'])\
-                    > (bpm['valid_acc_class_hateful'] + bpm['valid_acc_class_abusive']):
-                self.save_model(model_save_dir=results_dir, state=self.state)
+            if (valid_statistics['valid_f_score_hateful'] + valid_statistics['valid_f_score_abusive'])\
+                    > (bpm['valid_f_score_hateful'] + bpm['valid_f_score_abusive']):
                 for stats in [train_statistics, valid_statistics]:
                     for key, value in stats.items():
                         bpm[key] = value
                         self.state[key] = value
+                self.save_model(model_save_dir=results_dir, state=self.state)
 
             # save train statistics.
-            storage_utils.save_statistics(train_statistics, file_path=train_results_path)
+            file_action_key = 'w' if epoch == 1 else 'a+'
+            storage_utils.save_statistics(train_statistics, file_path=train_results_path, file_action_key=file_action_key)
             logger.print(train_statistics)
-            storage_utils.save_statistics(valid_statistics, file_path=valid_results_path)
+            storage_utils.save_statistics(valid_statistics, file_path=valid_results_path, file_action_key=file_action_key)
             logger.print(valid_statistics)
-
-            # Step
-            if scheduler is not None:
-                scheduler.step()
-            for param_group in self.optimizer.param_groups:
-                logger.print('=== Learning rate: {} ==='.format(param_group['lr']))
 
         print("=== Generating test set evaluation metrics ===")
         self.load_model(model_save_dir=results_dir)
-        test_statistics = self._test_epoch(test_data, label_mapping, self.gpu)
-        bpm['seed'] = seed
-        bpm['title'] = title
+        test_statistics = self._test_epoch(test_data, hyper_params['label_mapping'], self.gpu)
+        test_statistics['seed'] = hyper_params['seed']
+        test_statistics['title'] = hyper_params['title']
+        self.log_to_comet(experiment, bpm['epoch'], [test_statistics])
         merge_dict = OrderedDict(list(bpm.items()) + list(test_statistics.items()))
         storage_utils.save_statistics(merge_dict, file_path=test_results_path, file_action_key='a+')
         logger.print(merge_dict)

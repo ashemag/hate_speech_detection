@@ -126,8 +126,8 @@ def prepare_output_file(filename, output=None, clean_flag=False, file_action_key
         with open(filename, file_action_key) as csvfile:
             for _, values in output.items():
                 break
+
             writer = csv.DictWriter(csvfile, fieldnames=list(values.keys()))
             writer.writeheader()
             for key, value in output.items():
                 writer.writerow(value)
-
