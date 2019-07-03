@@ -17,9 +17,12 @@ def split_data(x, y):
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.2, random_state=1)
 
     x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.1, random_state=1)
-    print("Hateful in train: {}, hateful in val: {}, hateful in test: {}".format(y_train.count(0)/len(y_train),
-                                                                                 y_val.count(0)/len(y_val),
-                                                                                 y_test.count(0)/len(y_test)))
+    print("[Class %] Hateful in train: {}, hateful in val: {}, hateful in test: {}"
+          .format(round(y_train.count(0)/len(y_train), 2),
+                  round(y_val.count(0)/len(y_val), 2),
+                  round(y_test.count(0)/len(y_test), 2)
+                  )
+          )
     return x_train, y_train, x_val, y_val, x_test, y_test
 
 
@@ -93,8 +96,8 @@ def extract_tweets(data, filename, subset=None):
 
     # for key in sorted(cnt.keys()):
     #     print("word length: {} frequency: {}".format(key, cnt[key]))
-    print("Locations: {}".format(Counter(locations).most_common(10)))
-    print("Geos: {}".format(Counter(geo)))
+   # print("Locations: {}".format(Counter(locations).most_common(10)))
+   # print("Geos: {}".format(Counter(geo)))
     print("Removed {}/{} labels".format(error_count, line_count))
     print("Average tweet length is {} words".format(int(np.mean(tweet_length))))
     print("Average tweet length is {} characters".format(int(np.mean(tweet_char_length))))
@@ -104,12 +107,13 @@ def extract_tweets(data, filename, subset=None):
     return tweets, labels
 
 
-def prepare_output_file(filename, output=None, clean_flag=False):
+def prepare_output_file(filename, output=None, clean_flag=False, file_action_key='w'):
     """
 
     :param filename:
     :param output: dictionary to write to csv
     :param clean_flag: bool to delete existing dictionary
+    :param file_action_key: w to write or a+ to append to file
     :return:
     """
     file_exists = os.path.isfile(filename)
@@ -119,12 +123,11 @@ def prepare_output_file(filename, output=None, clean_flag=False):
     else:
         if output is None:
             raise ValueError("Please specify output to write to output file.")
+        with open(filename, file_action_key) as csvfile:
+            for _, values in output.items():
+                break
+            writer = csv.DictWriter(csvfile, fieldnames=list(values.keys()))
+            writer.writeheader()
+            for key, value in output.items():
+                writer.writerow(value)
 
-        with open(filename, 'a') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=list(output.keys()))
-            if not file_exists:
-                writer.writeheader()
-            if VERBOSE:
-                print("Writing to file {0}".format(filename))
-                print(output)
-            writer.writerow(output)

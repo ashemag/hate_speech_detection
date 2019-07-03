@@ -1,4 +1,4 @@
-from comet_ml import Experiment
+#from comet_ml import Experiment
 import numpy as np
 import os
 from models import storage_utils
@@ -74,7 +74,7 @@ class Network(torch.nn.Module):
         (2) this makes model a cuda model. makes it so that gpu is used with it.
         '''
 
-    def get_acc_batch(self, y_batch, y_batch_pred):
+    def compute_batch_accuracy(self, y_batch, y_batch_pred):
         _, y_pred_batch_int = torch.max(y_batch_pred.data, 1)  # argmax of predictions
         acc = np.mean(list(y_pred_batch_int.eq(y_batch.data).cpu()))  # compute accuracy
         return acc
@@ -94,132 +94,141 @@ class Network(torch.nn.Module):
         print(statistics_to_save)
         storage_utils.save_statistics(statistics_to_save,train_file_path)
 
-    def train_evaluate(self, train_set, valid_full, test_full, num_epochs, optimizer, results_dir,
-                       criterion=torch.nn.CrossEntropyLoss(), label_mapping=None, scheduler=None):
+    def _train_epoch(self, epoch_local, train_data, label_mapping, gpu):
+        batch_statistics = defaultdict(lambda: [])
+        with tqdm(total=len(train_data)) as pbar_train:
+            for i, batch in enumerate(train_data):
+                x, y = batch
+                if gpu:
+                    x = x.to(device=self.device)
+                    y = y.to(device=self.device)
+
+                output = self.compute_train_iteration(x, y, label_mapping)
+
+                # SAVE BATCH STATS
+                for key, value, in output.items():
+                    batch_statistics[key].append(value.item())
+
+                pbar_train.update(1)
+
+        epoch_stats = OrderedDict({})
+        epoch_stats['epoch'] = epoch_local
+        for k, v in batch_statistics.items():
+            epoch_stats[k] = np.around(np.mean(v), decimals=4)
+        return epoch_stats
+
+    def _valid_epoch(self, epoch_local, valid_data, label_mapping, gpu):
+        batch_statistics = defaultdict(lambda: [])
+        with tqdm(total=len(valid_data)) as pbar_val:
+            for i, batch in enumerate(valid_data):
+                x_all, y_all = batch
+                if gpu:
+                    x_all = x_all.to(device=self.device)
+                    y_all = y_all.to(device=self.device)
+                output = self.compute_valid_iteration('valid', x_all, y_all, label_mapping)
+
+                # SAVE BATCH STATS
+                for key, value, in output.items():
+                    batch_statistics[key].append(value.item())
+
+                pbar_val.update(1)
+        epoch_stats = OrderedDict({})
+        epoch_stats['epoch'] = epoch_local
+        for k, v in batch_statistics.items():
+            epoch_stats[k] = np.around(np.mean(v), decimals=4)
+
+        return epoch_stats
+
+    def _test_epoch(self, test_data, label_mapping, gpu):
+        batch_statistics = defaultdict(lambda: [])
+        with tqdm(total=len(test_data)) as pbar_test:
+            for i, batch in enumerate(test_data):
+                x_all, y_all = batch
+                if gpu:
+                    x_all = x_all.to(device=self.device)
+                    y_all = y_all.to(device=self.device)
+
+                output = self.compute_valid_iteration('test', x_all, y_all, label_mapping)
+
+                # SAVE BATCH STATS
+                for key, value, in output.items():
+                    batch_statistics[key].append(output[key].item())
+
+                pbar_test.update(1)
+
+        epoch_stats = OrderedDict({})
+        for k, v in batch_statistics.items():
+            epoch_stats[k] = np.around(np.mean(v), decimals=4)
+
+        return epoch_stats
+
+    @staticmethod
+    def log_to_comet(experiment, epoch, stats_to_log):
+        for stats in stats_to_log:
+            for k, v in stats.items():
+                experiment.log_metric(k, stats[k], step=epoch)
+
+    def train_evaluate(self, train_data, valid_data, test_data, num_epochs, optimizer, results_dir,
+                       criterion, seed, title, label_mapping, scheduler=None):
 
         # SET OUTPUT PATH
         if not os.path.exists(results_dir):
             os.makedirs(results_dir)
-        train_results_path = os.path.join(results_dir, 'train_results.txt')
-        valid_and_test_results_path = os.path.join(results_dir, 'valid_and_test_results.txt')
-        model_save_dir = os.path.join(results_dir, 'model')
+        train_results_path = os.path.join(results_dir, 'train_results_{}.csv'.format(seed))
+        valid_results_path = os.path.join(results_dir, 'valid_results_{}.csv'.format(seed))
+        test_results_path = os.path.join(results_dir, 'test_results.csv')
 
         # SET LOGS
         logger = Logger(stream=sys.stderr, disable=False)
-        gpu = self.gpu
+        self.state = dict()
         self.num_epochs = num_epochs
         self.optimizer = optimizer
         self.criterion = criterion
-        self.experiment = Experiment(project_name=results_dir.split('/')[-1], workspace="ashemag")
 
         if scheduler is not None:
             self.scheduler = scheduler
 
-        def train_epoch(current_epoch):
-            batch_statistics = defaultdict(lambda: [])
-            with self.experiment.train():
-                with tqdm(total=len(train_set)) as pbar_train:
-                    for i, batch in enumerate(train_set):
-                        x, y = batch
-                        if gpu:
-                            x = x.to(device=self.device)
-                            y = y.to(device=self.device)
-
-                        output = self.train_iteration(x, y, label_mapping)
-                        # SAVE BATCH STATS
-                        for key, value, in output.items():
-                            batch_statistics[key].append(output[key].item())
-                            self.experiment.log_metric(key, output[key].item())
-                        # SET PBAR
-                        string_description = " ".join(
-                            ["{}:{:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
-                        pbar_train.update(1)
-                        # pbar_val.set_description(string_description)
-
-            epoch_stats = OrderedDict({})
-            epoch_stats['current_epoch'] = current_epoch
-            for k, v in batch_statistics.items():
-                epoch_stats[k] = np.around(np.mean(v), decimals=4)
-            return epoch_stats
-
-        def test_epoch(current_epoch):
-            batch_statistics = defaultdict(lambda: [])
-            with self.experiment.validate():
-                with tqdm(total=len(valid_full)) as pbar_val:
-                    for i, batch in enumerate(valid_full):
-                        x_all, y_all = batch
-                        if gpu:
-                            x_all = x_all.to(device=self.device)
-                            y_all = y_all.to(device=self.device)
-                        output = self.valid_iteration('valid', x_all, y_all, label_mapping)
-
-                        # SAVE BATCH STATS
-                        for key, value, in output.items():
-                            batch_statistics[key].append(output[key].item())
-                            self.experiment.log_metric(key, output[key].item())
-
-                        string_description = " ".join(["{}:{:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
-                        pbar_val.update(1)
-                        # pbar_val.set_description(string_description)
-
-            with self.experiment.test():
-                with tqdm(total=len(test_full)) as pbar_test:
-                    for i, batch in enumerate(test_full):
-                        x_all, y_all = batch
-                        if gpu:
-                            x_all = x_all.to(device=self.device)
-                            y_all = y_all.to(device=self.device)
-
-                        output = self.valid_iteration('test', x_all, y_all, label_mapping)
-
-                        # SAVE BATCH STATS
-                        for key, value, in output.items():
-                            batch_statistics[key].append(output[key].item())
-                            self.experiment.log_metric(key, output[key].item())
-
-                        string_description = " ".join(
-                            ["{}: {:.4f}".format(key, np.mean(value)) for key, value in batch_statistics.items()])
-                        pbar_test.update(1)
-                        # pbar_test.set_description(string_description)
-
-            epoch_stats = OrderedDict({})
-            epoch_stats['current_epoch'] = current_epoch
-            for k, v in batch_statistics.items():
-                epoch_stats[k] = np.around(np.mean(v), decimals=4)
-
-            test_statistics_to_save = epoch_stats
-            return test_statistics_to_save
+        #experiment = Experiment(project_name=results_dir.split('/')[-1], workspace="ashemag")
 
         bpm = defaultdict(lambda: 0)
         torch.cuda.empty_cache()
-        for current_epoch in range(self.num_epochs):
-            train_statistics_to_save = train_epoch(current_epoch)
-            test_statistics_to_save = test_epoch(current_epoch)
+        for epoch in range(1, int(self.num_epochs + 1)):
+            train_statistics = self._train_epoch(epoch, train_data, label_mapping, self.gpu)
+            valid_statistics = self._valid_epoch(epoch, valid_data, label_mapping, self.gpu)
 
-            # save train statistics.
-            storage_utils.save_statistics(train_statistics_to_save, file_path=train_results_path)
-
-            # save model.
-            #self.save_model(model_save_dir, model_save_name='model_epoch_{}'.format(str(current_epoch)))
-            logger.print(train_statistics_to_save)
+            #self.log_to_comet(experiment, current_epoch, [train_statistics_to_save, valid_statistics_to_save])
 
             # save bpm statistics
-            if (test_statistics_to_save['valid_acc_class_hateful'] + test_statistics_to_save['valid_acc_class_abusive'])\
+            if (valid_statistics['valid_acc_class_hateful'] + valid_statistics['valid_acc_class_abusive'])\
                     > (bpm['valid_acc_class_hateful'] + bpm['valid_acc_class_abusive']):
-                for key, value in test_statistics_to_save.items():
-                    bpm[key] = value
-                for key, value in train_statistics_to_save.items():
-                    bpm[key] = value
+                self.save_model(model_save_dir=results_dir, state=self.state)
+                for stats in [train_statistics, valid_statistics]:
+                    for key, value in stats.items():
+                        bpm[key] = value
+                        self.state[key] = value
 
-            storage_utils.save_statistics(test_statistics_to_save, file_path=valid_and_test_results_path)
-            logger.print(test_statistics_to_save)
+            # save train statistics.
+            storage_utils.save_statistics(train_statistics, file_path=train_results_path)
+            logger.print(train_statistics)
+            storage_utils.save_statistics(valid_statistics, file_path=valid_results_path)
+            logger.print(valid_statistics)
 
-            if scheduler is not None: scheduler.step()
+            # Step
+            if scheduler is not None:
+                scheduler.step()
             for param_group in self.optimizer.param_groups:
-                logger.print('learning rate: {}'.format(param_group['lr']))
-        return bpm
+                logger.print('=== Learning rate: {} ==='.format(param_group['lr']))
 
-    def get_class_stats_helper(self, y_all, y_pred_all, criterion, class_idx):
+        print("=== Generating test set evaluation metrics ===")
+        self.load_model(model_save_dir=results_dir)
+        test_statistics = self._test_epoch(test_data, label_mapping, self.gpu)
+        bpm['seed'] = seed
+        bpm['title'] = title
+        merge_dict = OrderedDict(list(bpm.items()) + list(test_statistics.items()))
+        storage_utils.save_statistics(merge_dict, file_path=test_results_path, file_action_key='a+')
+        logger.print(merge_dict)
+
+    def compute_class_stats_helper(self, y_all, y_pred_all, criterion, class_idx):
         # find class specific stats
         y_min = []
         y_pred_min = []
@@ -233,12 +242,12 @@ class Network(torch.nn.Module):
             y_min = torch.stack(y_min, dim=0)
             y_pred_min = torch.stack(y_pred_min, dim=0)
             loss_min = (criterion(input=y_pred_min, target=y_min.view(-1)))
-            acc_min = self.get_acc_batch(y_min, y_pred_min)
+            acc_min = self.compute_batch_accuracy(y_min, y_pred_min)
         return loss_min, acc_min
 
-    def get_class_stats(self, type_key, output, y_all, y_pred_all, criterion, label_mapping, class_range=4):
+    def compute_class_stats(self, type_key, output, y_all, y_pred_all, criterion, label_mapping, class_range=4):
         for class_idx in range(class_range):
-            loss_min, acc_min = self.get_class_stats_helper(y_all, y_pred_all, criterion, class_idx)
+            loss_min, acc_min = self.compute_class_stats_helper(y_all, y_pred_all, criterion, class_idx)
             if acc_min is None or loss_min is None:
                 continue
 
@@ -247,7 +256,7 @@ class Network(torch.nn.Module):
             output[type_key + '_acc_class_' + class_key] = acc_min
             output[type_key + '_loss_class_' + class_key] = loss_min
 
-    def train_iteration(self, x_all, y_all, label_mapping):
+    def compute_train_iteration(self, x_all, y_all, label_mapping):
         self.train()
         criterion = self.criterion.cuda()
         x_all = x_all.float()
@@ -256,7 +265,7 @@ class Network(torch.nn.Module):
         self.optimizer.zero_grad()
         loss_all.backward()
         self.optimizer.step()
-        acc_all = self.get_acc_batch(y_all, y_pred_all)
+        acc_all = self.compute_batch_accuracy(y_all, y_pred_all)
 
         output = {'train_loss': loss_all.data, 'train_acc': acc_all}
         _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
@@ -267,10 +276,10 @@ class Network(torch.nn.Module):
         )
         for i in range(len(scores)):
             output['train_f_score' + '_' + label_mapping[i]] = scores[i]
-        self.get_class_stats('train', output, y_all, y_pred_all, criterion, label_mapping)
+        self.compute_class_stats('train', output, y_all, y_pred_all, criterion, label_mapping)
         return output
 
-    def valid_iteration(self, type_key, x_all, y_all, label_mapping):
+    def compute_valid_iteration(self, type_key, x_all, y_all, label_mapping):
         with torch.no_grad():
             self.eval()
             '''
@@ -281,7 +290,7 @@ class Network(torch.nn.Module):
             x_all = x_all.float()
             y_pred_all = self.forward(x_all)
             loss_all = criterion(input=y_pred_all, target=y_all.view(-1))
-            acc_all = self.get_acc_batch(y_all, y_pred_all)
+            acc_all = self.compute_batch_accuracy(y_all, y_pred_all)
             output = {type_key + '_loss': loss_all.data, type_key + '_acc': acc_all}
 
             _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
@@ -292,19 +301,33 @@ class Network(torch.nn.Module):
             )
             for i in range(len(scores)):
                 output[type_key + '_f_score' + '_' + label_mapping[i]] = scores[i]
-            self.get_class_stats(type_key, output, y_all, y_pred_all, criterion, label_mapping)
+            self.compute_class_stats(type_key, output, y_all, y_pred_all, criterion, label_mapping)
         return output
 
-    def save_model(self, model_save_dir,model_save_name):
-        state = dict()
+    def save_model(self, model_save_dir, state):
+        """
+        Save the network parameter state and current best val epoch idx and best val accuracy.
+        :param model_save_name: Name to use to save model without the epoch index
+        :param model_idx: The index to save the model with.
+        :param best_validation_model_idx: The index of the best validation model to be stored for future use.
+        :param best_validation_model_acc: The best validation accuracy to be stored for use at test time.
+        :param model_save_dir: The directory to store the state at.
+        :param state: The dictionary containing the system state.
+
+        """
         state['network'] = self.state_dict()  # save network parameter and other variables.
-        model_path = os.path.join(model_save_dir,model_save_name)
+        model_save_name = 'model_state'
+        torch.save(state, f=os.path.join(model_save_dir, "{}".format(model_save_name)))  # save state at prespecified filepath
 
-        directory = os.path.dirname(model_path)
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-        torch.save(state, f=model_path)
-
-    def load_model(self, model_path):
-        state = torch.load(f=model_path)
+    def load_model(self, model_save_dir):
+        """
+        Load the network parameter state and the best val model idx and best val acc to be compared with the future val accuracies, in order to choose the best val model
+        :param model_save_dir: The directory to store the state at.
+        :param model_save_name: Name to use to save model without the epoch index
+        :param model_idx: The index to save the model with.
+        :return: best val idx and best val model acc, also it loads the network state into the system state without returning it
+        """
+        model_save_name = 'model_state'
+        state = torch.load(f=os.path.join(model_save_dir, "{}".format(model_save_name)))
+        # saves state['network'] of model into model (self)
         self.load_state_dict(state_dict=state['network'])

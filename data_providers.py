@@ -1,5 +1,7 @@
 import json
 import csv
+import time
+
 import numpy as np
 from collections import Counter
 
@@ -11,6 +13,9 @@ from preprocessor import Preprocessor
 import torch.utils.data as data
 from utils import *
 import pandas as pd
+import torch
+import torch.utils.data
+import torchvision
 
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
@@ -24,130 +29,21 @@ NUM_CLASSES = 4
 class DataProvider(data.Dataset):
     """Generic data provider."""
 
-    def __init__(self, inputs, targets, batch_size, max_num_batches=-1,
-                 shuffle_order=True, seed=28, make_one_hot=True, with_replacement=False):
-        """Create a new data provider object.
-
-        Args:
-            inputs (ndarray): Array of data input features of shape
-                (num_data, input_dim).
-            targets (ndarray): Array of data output targets of shape
-                (num_data, output_dim) or (num_data,) if output_dim == 1.
-            batch_size (int): Number of data points to include in each batch.
-            max_num_batches (int): Maximum number of batches to iterate over
-                in an epoch. If `max_num_batches * batch_size > num_data` then
-                only as many batches as the data can be split into will be
-                used. If set to -1 all of the data will be used.
-            shuffle_order (bool): Whether to randomly permute the order of
-                the data before each epoch.
-            seed: to set random state
-        """
-        self.with_replacement = with_replacement
-
-        self.inputs = inputs
+    def __init__(self, inputs, targets, seed, make_one_hot=False):
+        self.inputs = np.array(inputs)
         self.num_classes = len(set(targets))
 
         if make_one_hot:
             self.targets = self.to_one_of_k(targets)
         else:
-            self.targets = targets
-
-        if batch_size < 1:
-            raise ValueError('batch_size must be >= 1')
-        self._batch_size = batch_size
-        if max_num_batches == 0 or max_num_batches < -1:
-            raise ValueError('max_num_batches must be -1 or > 0')
-        self._max_num_batches = max_num_batches
-        self._update_num_batches()
-        self.shuffle_order = shuffle_order
-        self._current_order = np.arange(inputs.shape[0])
+            self.targets = np.array(targets)
         self.rng = np.random.RandomState(seed)
-        self.new_epoch()
-
-    @property
-    def batch_size(self):
-        """Number of data points to include in each batch."""
-        return self._batch_size
 
     def __len__(self):
         return len(self.inputs)
 
-
     def __getitem__(self, index):
-        """
-        Args:
-            index (int): Index
-        Returns:
-            tuple: (image, target) where target is index of the target class.
-        """
         return self.inputs[index], self.targets[index]
-
-    @batch_size.setter
-    def batch_size(self, value):
-        if value < 1:
-            raise ValueError('batch_size must be >= 1')
-        self._batch_size = value
-        self._update_num_batches()
-
-    @property
-    def max_num_batches(self):
-        """Maximum number of batches to iterate over in an epoch."""
-        return self._max_num_batches
-
-    @max_num_batches.setter
-    def max_num_batches(self, value):
-        if value == 0 or value < -1:
-            raise ValueError('max_num_batches must be -1 or > 0')
-        self._max_num_batches = value
-        self._update_num_batches()
-
-    def _update_num_batches(self):
-        """Updates number of batches to iterate over."""
-        # maximum possible number of batches is equal to number of whole times
-        # batch_size divides in to the number of data points which can be
-        # found using integer division
-        possible_num_batches = self.inputs.shape[0] // self.batch_size
-        if self.max_num_batches == -1:
-            self.num_batches = possible_num_batches
-        else:
-            self.num_batches = min(self.max_num_batches, possible_num_batches)
-
-    def __iter__(self):
-        """Implements Python iterator interface.
-
-        This should return an object implementing a `next` method which steps
-        through a sequence returning one element at a time and raising
-        `StopIteration` when at the end of the sequence. Here the object
-        returned is the DataProvider itself.
-        """
-        return self
-
-    def new_epoch(self):
-        """Starts a new epoch (pass through data), possibly shuffling first."""
-        self._curr_batch = 0
-        if self.shuffle_order:
-            self.shuffle()
-
-    def __next__(self):
-        if self.with_replacement:
-            return self.next_with_replacement()
-
-        return self.next()
-
-    def reset(self):
-        """Resets the provider to the initial state."""
-        inv_perm = np.argsort(self._current_order)
-        self._current_order = self._current_order[inv_perm]
-        self.inputs = self.inputs[inv_perm]
-        self.targets = self.targets[inv_perm]
-        self.new_epoch()
-
-    def shuffle(self):
-        """Randomly shuffles order of data."""
-        perm = self.rng.permutation(self.inputs.shape[0])
-        self._current_order = self._current_order[perm]
-        self.inputs = self.inputs[perm]
-        self.targets = self.targets[perm]
 
     def to_one_of_k(self, int_targets):
         """Converts integer coded class target to 1 of K coded targets.
@@ -168,27 +64,44 @@ class DataProvider(data.Dataset):
         one_of_k_targets[range(int_targets.shape[0]), int_targets] = 1
         return one_of_k_targets
 
-    def next_with_replacement(self):
-        self.shuffle()
-        batch_slice = slice(self.batch_size)
-        inputs_batch = self.inputs[batch_slice]
-        targets_batch = self.targets[batch_slice]
-        return inputs_batch, targets_batch
 
-    def next(self):
-        """Returns next data batch or raises `StopIteration` if at end."""
-        if self._curr_batch + 1 > self.num_batches:
-            # no more batches in current iteration through data set so start
-            # new epoch ready for another pass and indicate iteration is at end
-            self.new_epoch()
-            raise StopIteration()
-        # create an index slice corresponding to current batch number
-        batch_slice = slice(self._curr_batch * self.batch_size,
-                            (self._curr_batch + 1) * self.batch_size)
-        inputs_batch = self.inputs[batch_slice]
-        targets_batch = self.targets[batch_slice]
-        self._curr_batch += 1
-        return inputs_batch, targets_batch
+class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
+    """Samples elements randomly from a given list of indices for imbalanced dataset
+    Arguments:
+        indices (list, optional): a list of indices
+        num_samples (int, optional): number of samples to draw
+    """
+
+    def __init__(self, dataset, indices=None, num_samples=None):
+
+        # if indices is not provided,
+        # all elements in the dataset will be considered
+        self.indices = list(range(len(dataset))) \
+            if indices is None else indices
+
+        # if num_samples is not provided,
+        # draw `len(indices)` samples in each iteration
+        self.num_samples = len(self.indices) \
+            if num_samples is None else num_samples
+
+        # distribution of classes in the dataset
+        label_to_count = {}
+        for idx in self.indices:
+            inputs, label = dataset[idx]
+            if label in label_to_count:
+                label_to_count[label] += 1
+            else:
+                label_to_count[label] = 1
+
+        # weight for each sample
+        weights = [1.0 / label_to_count[dataset[idx][1]] for idx in self.indices]
+        self.weights = torch.DoubleTensor(weights)
+
+    def __iter__(self):
+        return (self.indices[i] for i in torch.multinomial(self.weights, self.num_samples, replacement=True))
+
+    def __len__(self):
+        return self.num_samples
 
 
 class LogisticRegressionDataProvider(object):
@@ -240,9 +153,24 @@ class CNNTextDataProvider(object):
         return tweets
 
     @staticmethod
-    def fetch_character_embeddings(raw_tweets):
-        chars = 'abcdefghijklmnopqrstuvwxyz0123456789 -,;.!?:’’’/\|_@#$%ˆ&*˜‘+-=()[]{}'
+    def fetch_character_symbols(raw_tweets):
+        """
+        Dynamically create mapping for one hot encoding of chars
+        :param raw_tweets: list of all tweets
+        :return:
+        """
+        chars = set()
+        for i, tweet in enumerate(raw_tweets):
+            for word in tweet:
+                chars.update(list(word))
         char_mapping = {char: np.eye(len(chars))[index] for index, char in enumerate(chars)}
+        return chars, char_mapping
+
+    def fetch_character_embeddings(self, raw_tweets):
+        print("=== Creating Character Embeddings ===")
+        start = time.time()
+        char_mapping = self.fetch_character_symbols(raw_tweets)
+        char_dimension = len(char_mapping)
         processed_tweets = []
         for i, tweet in enumerate(raw_tweets):
             embedded_tweet = []
@@ -257,24 +185,25 @@ class CNNTextDataProvider(object):
                 if len(word) >= TWEET_WORD_SIZE:
                     word = word[:TWEET_WORD_SIZE]
 
-                embedded_word = [char_mapping[char] if char in char_mapping else np.zeros(len(chars)) for char in word]
+                embedded_word = [char_mapping[char] if char in char_mapping else np.zeros(char_dimension) for char in word]
 
                 # pad if too short
                 if len(word) <= TWEET_WORD_SIZE:
                     diff = TWEET_WORD_SIZE - len(word)
-                    embedded_word += [np.zeros(len(chars)) for _ in range(diff)]
+                    embedded_word += [np.zeros(char_dimension) for _ in range(diff)]
 
                 embedded_tweet.append(np.array(embedded_word))
 
             # pad if too short
             if len(tweet) <= TWEET_SENTENCE_SIZE:
                 diff = TWEET_SENTENCE_SIZE - len(tweet)
-                random_words = np.zeros((diff, TWEET_WORD_SIZE, len(chars)))
+                random_words = np.zeros((diff, TWEET_WORD_SIZE, char_dimension))
                 for random_word in random_words:
                     embedded_tweet.append(random_word)
 
             processed_tweets.append(np.array(embedded_tweet))
-        print("embedded doc shape {}".format(np.array(processed_tweets).shape))
+
+        print("=== Finished Character Embeddings ({} mins) ===".format(round((time.time() - start) / 60, 2)))
         return processed_tweets
 
     @staticmethod

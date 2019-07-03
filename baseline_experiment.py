@@ -1,13 +1,13 @@
 """
 Runs baseline experiments
 """
-from comet_ml import Experiment
+#from comet_ml import Experiment
 import argparse
 import time
 from torch import optim
 from globals import ROOT_DIR
 from models.cnn import *
-from data_provider import *
+from data_providers import *
 import pickle
 import os
 from models.logistic_regression import logistic_regression
@@ -60,7 +60,7 @@ def extract_data(embedding_key, embedding_level_key, model):
                     res.append(pickle.load(f))
             x_train, y_train, x_val, y_val, x_test, y_test = res
         if VERBOSE:
-            print("training set: {}, validation set: {}, test set: {}".format(len(x_train), len(x_val), len(x_test)))
+            print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(x_train), len(x_val), len(x_test)))
         return x_train, y_train, x_val, y_val, x_test, y_test
     else:
         return LogisticRegressionDataProvider().extract(FILENAME, FILENAME_LABELS)
@@ -72,26 +72,24 @@ def wrap_data(x_train, y_train, x_val, y_val, x_test, y_test, seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    trainset = DataProvider(inputs=np.array(x_train),
-                            targets=np.array(y_train),
-                            batch_size=BATCH_SIZE,
-                            make_one_hot=False,
-                            seed=seed)
-    train_data = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    trainset = DataProvider(inputs=x_train, targets=y_train, seed=seed)
+    train_data = torch.utils.data.DataLoader(trainset,
+                                             batch_size=BATCH_SIZE,
+                                             num_workers=2,
+                                             sampler=ImbalancedDatasetSampler(trainset))
 
-    validset = DataProvider(inputs=np.array(x_val),
-                            targets=np.array(y_val),
-                            batch_size=BATCH_SIZE,
-                            make_one_hot=False,
-                            seed=seed)
-    valid_data = torch.utils.data.DataLoader(validset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    validset = DataProvider(inputs=x_val, targets=y_val, seed=seed)
+    valid_data = torch.utils.data.DataLoader(validset,
+                                             batch_size=BATCH_SIZE,
+                                             num_workers=2,
+                                             sampler=ImbalancedDatasetSampler(validset))
 
-    testset = DataProvider(inputs=np.array(x_test),
-                           targets=np.array(y_test),
-                           batch_size=BATCH_SIZE,
-                           make_one_hot=False,
-                           seed=seed)
-    test_data = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    testset = DataProvider(inputs=x_test, targets=y_test, seed=seed)
+    test_data = torch.utils.data.DataLoader(testset,
+                                            batch_size=BATCH_SIZE,
+                                            num_workers=2,
+                                            sampler=ImbalancedDatasetSampler(testset))
+
     return train_data, valid_data, test_data
 
 
@@ -126,26 +124,25 @@ if __name__ == "__main__":
     model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape, len(label_mapping))
 
     # OUTPUT
-    results_dir = os.path.join(ROOT_DIR, 'results/{}').format(args.model + '_' + args.name)
+    folder_title = '_'.join([args.model, args.name, args.embedding, args.embedding_level])
+    print("Writing to folder {}".format(folder_title))
+    results_dir = os.path.join(ROOT_DIR, 'results/{}').format(folder_title)
     start = time.time()
-    bpm = model.train_evaluate(
-        train_set=train_data,
-        valid_full=valid_data,
-        test_full=test_data,
+    model.train_evaluate(
+        train_data=train_data,
+        valid_data=valid_data,
+        test_data=test_data,
         num_epochs=args.num_epochs,
         optimizer=optimizer,
         results_dir=results_dir,
         scheduler=scheduler,
         label_mapping=label_mapping,
-        criterion=criterion
+        criterion=criterion,
+        title=folder_title,
+        seed=args.seed
     )
 
     # SAVE RESULTS
-    bpm['embedding'] = args.embedding
-    bpm['embedding_level'] = args.embedding_level
-    bpm['seed'] = args.seed
-    print(bpm)
     print("Total time (min): {}".format(round((time.time() - start) / float(60), 4)))
-    title = '_'.join([args.model, args.name, args.embedding, args.embedding_level])
-    results_dir_bpm = os.path.join(ROOT_DIR, '{}/{}.csv'.format(results_dir, title))
-    prepare_output_file(output=bpm, filename=results_dir_bpm)
+   # results_dir_bpm = os.path.join(ROOT_DIR, '{}/{}.csv'.format(results_dir, title))
+   # prepare_output_file(output=bpm, filename=results_dir_bpm)

@@ -9,7 +9,7 @@ from matplotlib import pyplot
 from sklearn.decomposition import PCA
 import numpy as np
 from baseline_experiment import extract_data, LogisticRegressionDataProvider
-from data_provider import CNNTextDataProvider
+from data_providers import CNNTextDataProvider
 
 EMBED_DIM = 200
 DEFAULT_SEED = 28
