@@ -109,27 +109,31 @@ class LogisticRegressionDataProvider(object):
         self.path_data = path_data
         self.path_labels = path_labels
 
-    def extract(self, verbose=True):
+    def extract(self, seed=28, verbose=True):
         data = extract_labels(self.path_labels)
         raw_tweets, labels = extract_tweets(data, self.path_data)
-        x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels)
+        x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels, seed)
 
         vectorizer = TfidfVectorizer(use_idf=True, max_features=10000, stop_words='english')
 
         output = {'x_train': vectorizer.fit_transform(x_train).todense(),
                   'y_train': y_train,
-                  'x_val': vectorizer.transform(x_val).todense(),
-                  'y_val': y_val,
+                  'x_valid': vectorizer.transform(x_val).todense(),
+                  'y_valid': y_val,
                   'x_test': vectorizer.transform(x_test).todense(),
                   'y_test': y_test}
+
+        total = len(output['x_train']) + len(output['x_valid']) + len(output['x_test'])
         if verbose:
-            print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(output['x_train']),
-                                                                                      len(output['x_val']),
-                                                                                      len(output['x_test'])))
+            print("[Sizes] Training set: {:.2f}%, Validation set: {:.2f}%, Test set: {:.2f}%".format(
+                len(output['x_train']) / float(total) * 100,
+                len(output['x_valid']) / float(total) * 100,
+                len(output['x_test']) / float(total) * 100))
+
+        return output
 
 
-
-class CNNTextDataProvider(object):
+class TextDataProvider(object):
     @staticmethod
     def _fetch_model(tweets_corpus, key, saved_flag=True):
         print("Using {} embeddings".format(key))
@@ -242,17 +246,17 @@ class CNNTextDataProvider(object):
             processed_tweets.append(embedded_tweet)
         return processed_tweets
 
-    def extract(self, filename_data, filename_labels, embedding_key, embedding_level_key, subset=None):
+    def extract(self, filename_data, filename_labels, embedding_key, embedding_level_key, seed):
         data = extract_labels(filename_labels)
-        raw_tweets, labels = extract_tweets(data, filename_data, subset)
+        raw_tweets, labels = extract_tweets(data, filename_data)
 
         if embedding_level_key == 'word':
             raw_tweets = self.tokenize(raw_tweets)
-            x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels)
+            x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels, seed)
             word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
             processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
         else: # CHAR
             raw_tweets = self.tokenize(raw_tweets)
             processed_tweets = self.fetch_character_embeddings(raw_tweets)
-        return split_data(processed_tweets, labels)
+        return split_data(processed_tweets, labels, seed)
 

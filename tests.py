@@ -9,7 +9,7 @@ from matplotlib import pyplot
 from sklearn.decomposition import PCA
 import numpy as np
 from deep_learning_experiments import extract_data, LogisticRegressionDataProvider
-from data_providers import CNNTextDataProvider
+from data_providers import TextDataProvider
 
 EMBED_DIM = 200
 DEFAULT_SEED = 28
@@ -32,7 +32,7 @@ class Testing(unittest.TestCase):
     #     data = dp.extract(FILENAME, FILENAME_LABELS)
     #
     def test_CNN(self):
-        p = CNNTextDataProvider()
+        p = TextDataProvider()
         x_train, y_train, x_val, y_val, x_test, y_test = p.extract(FILENAME, FILENAME_LABELS, key='twitter')
 
 

@@ -41,11 +41,10 @@ def get_args():
     return parser.parse_args()
 
 
-def extract_data(embedding_key, embedding_level_key, model):
-    path_data, path_labels = config['DEFAULT']['PATHNAME_DATA'], config['DEFAULT']['PATH_LABELS']
-    if model == 'CNN':
-        p = CNNTextDataProvider()
-        x_train, y_train, x_val, y_val, x_test, y_test = p.extract(path_data, path_labels, embedding_key, embedding_level_key)
+def extract_data(embedding_key, embedding_level_key, seed):
+    path_data, path_labels = config['DEFAULT']['PATH_DATA'], config['DEFAULT']['PATH_LABELS']
+    p = TextDataProvider()
+    x_train, y_train, x_val, y_val, x_test, y_test = p.extract(path_data, path_labels, embedding_key, embedding_level_key, seed)
 
     output = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test,
               'y_test': y_test}
@@ -72,13 +71,13 @@ def wrap_data(batch_size, seed, x_train, y_train, x_val, y_val, x_test, y_test):
     valid_data = torch.utils.data.DataLoader(validset,
                                              batch_size=batch_size,
                                              num_workers=2,
-                                             sampler=ImbalancedDatasetSampler(validset))
+                                             sampler=validset)
 
     testset = DataProvider(inputs=x_test, targets=y_test, seed=seed)
     test_data = torch.utils.data.DataLoader(testset,
                                             batch_size=batch_size,
                                             num_workers=2,
-                                            sampler=ImbalancedDatasetSampler(testset))
+                                            sampler=testset)
 
     return train_data, valid_data, test_data
 
@@ -109,7 +108,7 @@ def fetch_model_parameters(args, input_shape, num_output_classes):
 if __name__ == "__main__":
     label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
     args = get_args()
-    data = extract_data(args.embedding, args.embedding_level, args.model)
+    data = extract_data(args.embedding, args.embedding_level, args.seed)
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
     input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
     model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape, len(label_mapping))
@@ -140,5 +139,4 @@ if __name__ == "__main__":
         hyper_params=hyper_params
     )
 
-    # SAVE RESULTS
-    print("Total time (min): {}".format(round((time.time() - start) / float(60), 4)))
+    print("Total time (min): {:2f}".format(round((time.time() - start) / float(60), 4)))

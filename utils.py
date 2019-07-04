@@ -10,10 +10,10 @@ import numpy as np
 from preprocessor import Preprocessor
 
 
-def split_data(x, y, verbose=False):
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.2, random_state=1)
+def split_data(x, y, seed, verbose=False):
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.2, random_state=seed)
 
-    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.1, random_state=1)
+    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.1, random_state=seed)
     if verbose:
         print("[Class %] Hateful in train: {}, hateful in val: {}, hateful in test: {}"
               .format(round(y_train.count(0)/len(y_train), 2),
@@ -25,7 +25,7 @@ def split_data(x, y, verbose=False):
 
 
 def extract_labels(filename):
-    print("Extracting annotations")
+    print("=== Extracting annotations ===")
     data = {}
     with open(filename, 'r') as f:
         reader = csv.DictReader(f)
@@ -46,7 +46,7 @@ def process_text(text):
 
 
 def extract_tweets(data, filename, subset=None):
-    print("Extracting tweets from JSON")
+    print("=== Extracting tweets from JSON ===")
     tweets = []
     labels = []
     line_count = 0
@@ -96,16 +96,16 @@ def extract_tweets(data, filename, subset=None):
     #     print("word length: {} frequency: {}".format(key, cnt[key]))
    # print("Locations: {}".format(Counter(locations).most_common(10)))
    # print("Geos: {}".format(Counter(geo)))
-    print("Removed {}/{} labels".format(error_count, line_count))
-    print("Average tweet length is {} words".format(int(np.mean(tweet_length))))
-    print("Average tweet length is {} characters".format(int(np.mean(tweet_char_length))))
-    print("Average {} is {}".format('favorite count', int(np.mean(favorite_count))))
-    print("Average {} is {}".format('retweet count', int(np.mean(retweet_count))))
-    print("Average {} is {}".format('follower count', int(np.median(followers_count))))
+    print("[Stats] Removed {}/{} labels".format(error_count, line_count))
+    print("[Stats] Average tweet length is {} words".format(int(np.mean(tweet_length))))
+    print("[Stats] Average tweet length is {} characters".format(int(np.mean(tweet_char_length))))
+    print("[Stats] Average {} is {}".format('favorite count', int(np.mean(favorite_count))))
+    print("[Stats] Average {} is {}".format('retweet count', int(np.mean(retweet_count))))
+    print("[Stats] Average {} is {}".format('follower count', int(np.median(followers_count))))
     return tweets, labels
 
 
-def prepare_output_file(filename, output=None, clean_flag=False, file_action_key='w'):
+def prepare_output_file(filename, output=None, file_action_key='a+'):
     """
 
     :param filename:
@@ -115,17 +115,15 @@ def prepare_output_file(filename, output=None, clean_flag=False, file_action_key
     :return:
     """
     file_exists = os.path.isfile(filename)
-    if clean_flag:
-        if file_exists:
-            os.remove(filename)
-    else:
-        if output is None:
-            raise ValueError("Please specify output to write to output file.")
-        with open(filename, file_action_key) as csvfile:
-            for _, values in output.items():
-                break
 
-            writer = csv.DictWriter(csvfile, fieldnames=list(values.keys()))
+    if output is None:
+        raise ValueError("Please specify output to write to output file.")
+    with open(filename, file_action_key) as csvfile:
+        for _, values in output.items():
+            break
+
+        writer = csv.DictWriter(csvfile, fieldnames=list(values.keys()))
+        if not file_exists or file_action_key == 'w':
             writer.writeheader()
-            for key, value in output.items():
-                writer.writerow(value)
+        for _, value in output.items():
+            writer.writerow(value)

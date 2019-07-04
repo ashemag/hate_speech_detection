@@ -6,7 +6,7 @@ import tqdm
 import os
 import numpy as np
 import time
-from models.storage_utils import save_statistics
+from models.model_utils import save_statistics
 
 
 class ExperimentBuilder(nn.Module):

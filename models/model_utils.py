@@ -2,7 +2,7 @@ import os
 from collections import OrderedDict
 
 
-def save_statistics(statistics_to_save, file_path, file_action_key='w'):
+def save_statistics(statistics_to_save, file_path, file_action_key='a+'):
     '''
     :param statistics_to_save: dict, val type is float
     :param file_path: e.g. file_path = "C:/test_storage_utils/dir2/test.txt"

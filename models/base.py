@@ -1,15 +1,15 @@
 from comet_ml import OfflineExperiment
 import numpy as np
 import os
-from models import storage_utils
+from models import model_utils
 from tqdm import tqdm
 import sys
 from collections import OrderedDict
 from collections import defaultdict
 import warnings
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, precision_score, recall_score
 import torch
-
+from utils import prepare_output_file
 
 # remove warning for f-score, precision, recall
 def warn(*args, **kwargs):
@@ -93,7 +93,7 @@ class Network(torch.nn.Module):
                 statistics_to_save[key] = np.around(epoch_val, decimals=4)
 
         print(statistics_to_save)
-        storage_utils.save_statistics(statistics_to_save,train_file_path)
+        model_utils.save_statistics(statistics_to_save, train_file_path)
 
     def _train_epoch(self, epoch_local, train_data, label_mapping, gpu):
         batch_statistics = defaultdict(lambda: [])
@@ -185,7 +185,7 @@ class Network(torch.nn.Module):
         # set output path
         train_results_path = os.path.join(results_dir, 'train_results_{}.csv'.format(hyper_params['seed']))
         valid_results_path = os.path.join(results_dir, 'valid_results_{}.csv'.format(hyper_params['seed']))
-        test_results_path = os.path.join(results_dir, 'test_results.csv')
+        test_results_path = os.path.join(results_dir, 'results.csv')
 
         experiment = OfflineExperiment(project_name=results_dir.split('/')[-1],
                                        workspace="ashemag",
@@ -221,9 +221,9 @@ class Network(torch.nn.Module):
 
             # save train statistics.
             file_action_key = 'w' if epoch == 1 else 'a+'
-            storage_utils.save_statistics(train_statistics, file_path=train_results_path, file_action_key=file_action_key)
+            model_utils.save_statistics(train_statistics, file_path=train_results_path, file_action_key=file_action_key)
             logger.print(train_statistics)
-            storage_utils.save_statistics(valid_statistics, file_path=valid_results_path, file_action_key=file_action_key)
+            model_utils.save_statistics(valid_statistics, file_path=valid_results_path, file_action_key=file_action_key)
             logger.print(valid_statistics)
 
         print("=== Generating test set evaluation metrics ===")
@@ -233,36 +233,8 @@ class Network(torch.nn.Module):
         test_statistics['title'] = hyper_params['title']
         self.log_to_comet(experiment, bpm['epoch'], [test_statistics])
         merge_dict = OrderedDict(list(bpm.items()) + list(test_statistics.items()))
-        storage_utils.save_statistics(merge_dict, file_path=test_results_path, file_action_key='a+')
+        prepare_output_file(output={test_statistics['title']: merge_dict}, filename=test_results_path, file_action_key='a+')
         logger.print(merge_dict)
-
-    def compute_class_stats_helper(self, y_all, y_pred_all, criterion, class_idx):
-        # find class specific stats
-        y_min = []
-        y_pred_min = []
-        for i in range(y_all.shape[0]):
-            if int(y_all[i].data) == class_idx:
-                y_min.append(y_all[i])
-                y_pred_min.append(y_pred_all[i])
-
-        loss_min, acc_min = None, None
-        if len(y_min) > 0:
-            y_min = torch.stack(y_min, dim=0)
-            y_pred_min = torch.stack(y_pred_min, dim=0)
-            loss_min = (criterion(input=y_pred_min, target=y_min.view(-1)))
-            acc_min = self.compute_batch_accuracy(y_min, y_pred_min)
-        return loss_min, acc_min
-
-    def compute_class_stats(self, type_key, output, y_all, y_pred_all, criterion, label_mapping, class_range=4):
-        for class_idx in range(class_range):
-            loss_min, acc_min = self.compute_class_stats_helper(y_all, y_pred_all, criterion, class_idx)
-            if acc_min is None or loss_min is None:
-                continue
-
-            class_key = label_mapping[class_idx] if label_mapping is not None else str(class_idx)
-
-            output[type_key + '_acc_class_' + class_key] = acc_min
-            output[type_key + '_loss_class_' + class_key] = loss_min
 
     def compute_train_iteration(self, x_all, y_all, label_mapping):
         self.train()
@@ -277,15 +249,40 @@ class Network(torch.nn.Module):
 
         output = {'train_loss': loss_all.data, 'train_acc': acc_all}
         _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
-        scores = f1_score(
+        self.compute_f_metrics(output, y_all, y_pred_all_int, 'train', label_mapping)
+        return output
+
+    @staticmethod
+    def compute_f_metrics(output, y_all, y_pred_all_int, type_key, label_mapping):
+        f1score_overall = f1_score(
+            y_all.cpu().detach().numpy(),
+            y_pred_all_int.cpu().detach().numpy(),
+            average='weighted'
+        )
+
+        output[type_key + '_f_score'] = f1score_overall
+
+        f1scores = f1_score(
             y_all.cpu().detach().numpy(),
             y_pred_all_int.cpu().detach().numpy(),
             average=None
         )
-        for i in range(len(scores)):
-            output['train_f_score' + '_' + label_mapping[i]] = scores[i]
-        self.compute_class_stats('train', output, y_all, y_pred_all, criterion, label_mapping)
-        return output
+        precision = precision_score(
+            y_all.cpu().detach().numpy(),
+            y_pred_all_int.cpu().detach().numpy(),
+            average=None
+        )
+
+        recall = recall_score(
+            y_all.cpu().detach().numpy(),
+            y_pred_all_int.cpu().detach().numpy(),
+            average=None
+        )
+
+        for i in range(len(f1scores)):
+            output[type_key + '_f_score_' + label_mapping[i]] = f1scores[i]
+            output[type_key + '_precision_' + label_mapping[i]] = precision[i]
+            output[type_key + '_recall_' + label_mapping[i]] = recall[i]
 
     def compute_valid_iteration(self, type_key, x_all, y_all, label_mapping):
         with torch.no_grad():
@@ -302,14 +299,7 @@ class Network(torch.nn.Module):
             output = {type_key + '_loss': loss_all.data, type_key + '_acc': acc_all}
 
             _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
-            scores = f1_score(
-                y_all.cpu().detach().numpy(),
-                y_pred_all_int.cpu().detach().numpy(),
-                average=None
-            )
-            for i in range(len(scores)):
-                output[type_key + '_f_score' + '_' + label_mapping[i]] = scores[i]
-            self.compute_class_stats(type_key, output, y_all, y_pred_all, criterion, label_mapping)
+            self.compute_f_metrics(output, y_all, y_pred_all_int, type_key, label_mapping)
         return output
 
     def save_model(self, model_save_dir, state):
