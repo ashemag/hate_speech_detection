@@ -10,18 +10,22 @@ import numpy as np
 from preprocessor import Preprocessor
 
 
-def split_data(x, y, seed, verbose=False):
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.2, random_state=seed)
-
-    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.1, random_state=seed)
+def split_data(x, y, seed, verbose=True):
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.20, random_state=seed)
+    x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.20, random_state=seed)
+    total = len(x_train) + len(x_valid) + len(x_test)
     if verbose:
-        print("[Class %] Hateful in train: {}, hateful in val: {}, hateful in test: {}"
-              .format(round(y_train.count(0)/len(y_train), 2),
-                      round(y_val.count(0)/len(y_val), 2),
-                      round(y_test.count(0)/len(y_test), 2)
-                      )
-              )
-    return x_train, y_train, x_val, y_val, x_test, y_test
+        print("[Sizes] Training set: {:.2f}%, Validation set: {:.2f}%, Test set: {:.2f}%".format(
+            len(x_train) / float(total) * 100,
+            len(x_valid) / float(total) * 100,
+            len(x_test) / float(total) * 100))
+
+    label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
+    y_dict = {'y_train':y_train, 'y_valid':y_valid, 'y_test':y_test}
+    for key, value in y_dict.items():
+        for i in range(4):
+            print("{}: {} {}".format(key, label_mapping[i], value.count(i)/(len(value))))
+    return x_train, y_train, x_valid, y_valid, x_test, y_test
 
 
 def extract_labels(filename):
@@ -96,6 +100,12 @@ def extract_tweets(data, filename, subset=None):
     #     print("word length: {} frequency: {}".format(key, cnt[key]))
    # print("Locations: {}".format(Counter(locations).most_common(10)))
    # print("Geos: {}".format(Counter(geo)))
+   #  print(labels)
+    # label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
+
+    # for i in range(4):
+    #     print("{} {:0.2f}".format(label_mapping[i], labels.count(i)/(len(labels))))
+    # exit()
     print("[Stats] Removed {}/{} labels".format(error_count, line_count))
     print("[Stats] Average tweet length is {} words".format(int(np.mean(tweet_length))))
     print("[Stats] Average tweet length is {} characters".format(int(np.mean(tweet_char_length))))
@@ -105,7 +115,7 @@ def extract_tweets(data, filename, subset=None):
     return tweets, labels
 
 
-def prepare_output_file(filename, output=None, file_action_key='a+'):
+def prepare_output_file(filename, output=None, file_action_key='a+', experiment_global=True):
     """
 
     :param filename:
@@ -119,25 +129,35 @@ def prepare_output_file(filename, output=None, file_action_key='a+'):
     if output is None:
         raise ValueError("Please specify output to write to output file.")
     with open(filename, file_action_key) as csvfile:
-        for _, values in output.items():
-            break
-
         fieldnames = ['title', 'test_acc', 'test_f_score', 'test_f_score_hateful', 'test_f_score_abusive',
-        'num_experiments',
-        'valid_f_score_hateful', 'valid_f_score_abusive', 'epoch', 'train_loss', 'train_acc', 'train_f_score',
-        'train_f_score_hateful', 'train_precision_hateful', 'train_recall_hateful', 'train_f_score_abusive',
-        'train_precision_abusive', 'train_recall_abusive', 'train_f_score_normal', 'train_precision_normal',
-        'train_recall_normal', 'train_f_score_spam', 'train_precision_spam', 'train_recall_spam', 'learning_rate',
-        'valid_loss', 'valid_acc', 'valid_f_score', 'valid_precision_hateful', 'valid_recall_hateful',
-        'valid_precision_abusive', 'valid_recall_abusive', 'valid_f_score_normal', 'valid_precision_normal',
-        'valid_recall_normal', 'valid_f_score_spam', 'valid_precision_spam', 'valid_recall_spam', 'test_loss',
-        'test_precision_hateful', 'test_recall_hateful',
-        'test_precision_abusive', 'test_recall_abusive', 'test_f_score_normal',
-        'test_precision_normal', 'test_recall_normal', 'test_f_score_spam', 'test_precision_spam', 'test_recall_spam',
-        ]
+                      'num_experiments', 'epoch',
+                      'valid_f_score_hateful', 'valid_f_score_abusive', 'train_loss', 'train_acc',
+                      'train_f_score',
+                      'train_f_score_hateful', 'train_precision_hateful', 'train_recall_hateful',
+                      'train_f_score_abusive',
+                      'train_precision_abusive', 'train_recall_abusive', 'train_f_score_normal',
+                      'train_precision_normal',
+                      'train_recall_normal', 'train_f_score_spam', 'train_precision_spam', 'train_recall_spam',
+                      'learning_rate',
+                      'valid_loss', 'valid_acc', 'valid_f_score', 'valid_precision_hateful', 'valid_recall_hateful',
+                      'valid_precision_abusive', 'valid_recall_abusive', 'valid_f_score_normal',
+                      'valid_precision_normal',
+                      'valid_recall_normal', 'valid_f_score_spam', 'valid_precision_spam', 'valid_recall_spam',
+                      'test_loss',
+                      'test_precision_hateful', 'test_recall_hateful',
+                      'test_precision_abusive', 'test_recall_abusive', 'test_f_score_normal',
+                      'test_precision_normal', 'test_recall_normal', 'test_f_score_spam', 'test_precision_spam',
+                      'test_recall_spam',
+                      ]
+
+        for _, values in output.items():
+            if not experiment_global:
+                fieldnames = list(values.keys())
+            break
 
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if not file_exists or file_action_key == 'w':
             writer.writeheader()
+
         for _, value in output.items():
             writer.writerow(value)

@@ -9,6 +9,8 @@ from sklearn.feature_extraction.text import TfidfTransformer, CountVectorizer, T
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, cross_val_score
 from gensim.models import word2vec, KeyedVectors
+
+from globals import ROOT_DIR
 from preprocessor import Preprocessor
 import torch.utils.data as data
 from utils import *
@@ -104,60 +106,34 @@ class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
         return self.num_samples
 
 
-class LogisticRegressionDataProvider(object):
+class TextDataProvider(object):
     def __init__(self, path_data, path_labels):
         self.path_data = path_data
         self.path_labels = path_labels
+        self.data = extract_labels(self.path_labels)
+        self.raw_tweets, self.labels = extract_tweets(self.data, self.path_data)
 
-    def extract(self, seed=28, verbose=True):
-        data = extract_labels(self.path_labels)
-        raw_tweets, labels = extract_tweets(data, self.path_data)
-        x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels, seed)
-
-        vectorizer = TfidfVectorizer(use_idf=True, max_features=10000, stop_words='english')
-
-        output = {'x_train': vectorizer.fit_transform(x_train).todense(),
-                  'y_train': y_train,
-                  'x_valid': vectorizer.transform(x_val).todense(),
-                  'y_valid': y_val,
-                  'x_test': vectorizer.transform(x_test).todense(),
-                  'y_test': y_test}
-
-        total = len(output['x_train']) + len(output['x_valid']) + len(output['x_test'])
-        if verbose:
-            print("[Sizes] Training set: {:.2f}%, Validation set: {:.2f}%, Test set: {:.2f}%".format(
-                len(output['x_train']) / float(total) * 100,
-                len(output['x_valid']) / float(total) * 100,
-                len(output['x_test']) / float(total) * 100))
-
-        return output
-
-
-class TextDataProvider(object):
     @staticmethod
-    def _fetch_model(tweets_corpus, key, saved_flag=True):
+    def _fetch_model(tweets_corpus, key):
         print("[Model] Using {} embeddings".format(key))
         if key == 'google':
             embed_dim = GOOGLE_EMBED_DIM
-            filename = 'data/GoogleNews-vectors-negative300.bin'
+            filename = os.path.join(ROOT_DIR, 'data/GoogleNews-vectors-negative300.bin')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         elif key == 'twitter':
             embed_dim = TWITTER_EMBED_DIM
-            filename = 'data/word2vec_twitter_model/word2vec_twitter_model.bin'
+            filename = os.path.join(ROOT_DIR, 'data/word2vec_twitter_model/word2vec_twitter_model.bin')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         elif key == 'fastttext':
-            filename = 'data/wiki-news-300d-1M-subword.vec'
+            filename = os.path.join(ROOT_DIR, 'data/wiki-news-300d-1M-subword.vec')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         else:
-            filename = 'data/keyedvectors.bin'
             embed_dim = EMBED_DIM
-            if not saved_flag:
-                model = word2vec.Word2Vec(sentences=tweets_corpus, size=embed_dim)
-                model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
-                word_vectors = model.wv
-                word_vectors.save(filename)
-            else:
-                word_vectors = KeyedVectors.load(filename)
+            model = word2vec.Word2Vec(sentences=tweets_corpus, size=embed_dim)
+            model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
+            word_vectors = model.wv
+            #filename = os.path.join(ROOT_DIR, 'data/keyedvectors.bin')
+            #word_vectors.save(filename)
         return word_vectors, embed_dim
 
     @staticmethod
@@ -246,17 +222,44 @@ class TextDataProvider(object):
             processed_tweets.append(embedded_tweet)
         return processed_tweets
 
-    def extract(self, filename_data, filename_labels, embedding_key, embedding_level_key, seed):
-        data = extract_labels(filename_labels)
-        raw_tweets, labels = extract_tweets(data, filename_data)
+    def generate_tdidf_embeddings(self, seed, verbose=True):
+        x_train, y_train, x_val, y_val, x_test, y_test = split_data(self.raw_tweets, self.labels, seed)
 
-        if embedding_level_key == 'word':
-            raw_tweets = self.tokenize(raw_tweets)
-            x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels, seed)
-            word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
-            processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
-        else: # CHAR
-            raw_tweets = self.tokenize(raw_tweets)
-            processed_tweets = self.fetch_character_embeddings(raw_tweets)
-        return split_data(processed_tweets, labels, seed)
+        vectorizer = TfidfVectorizer(use_idf=True, max_features=10000, stop_words='english')
 
+        output = {'x_train': vectorizer.fit_transform(x_train).todense(),
+                  'y_train': y_train,
+                  'x_valid': vectorizer.transform(x_val).todense(),
+                  'y_valid': y_val,
+                  'x_test': vectorizer.transform(x_test).todense(),
+                  'y_test': y_test}
+
+        total = len(output['x_train']) + len(output['x_valid']) + len(output['x_test'])
+        if verbose:
+            print("[Sizes] Training set: {:.2f}%, Validation set: {:.2f}%, Test set: {:.2f}%".format(
+                len(output['x_train']) / float(total) * 100,
+                len(output['x_valid']) / float(total) * 100,
+                len(output['x_test']) / float(total) * 100))
+        return output
+
+    def _generate_embedding_output(self, processed_tweets, seed):
+        x_train, y_train, x_val, y_val, x_test, y_test = split_data(processed_tweets, self.labels, seed)
+        return {'x_train': x_train,
+                'y_train': y_train,
+                'x_valid': x_val,
+                'y_valid': y_val,
+                'x_test': x_test,
+                'y_test': y_test
+                }
+
+    def generate_word_level_embeddings(self, embedding_key, seed):
+        raw_tweets = self.tokenize(self.raw_tweets)
+        x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, self.labels, seed)
+        word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
+        processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
+        return self._generate_embedding_output(processed_tweets, seed)
+
+    def generate_char_level_embeddings(self, seed):
+        raw_tweets = self.tokenize(self.raw_tweets)
+        processed_tweets = self.fetch_character_embeddings(raw_tweets)
+        return self._generate_embedding_output(processed_tweets, seed)

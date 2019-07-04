@@ -24,8 +24,8 @@ def save_statistics(statistics_to_save, file_path, file_action_key='a+'):
                 line = line + str(val)
                 header = header + key
             else:
-                line = line + "\t" + str(val)
-                header = header + "\t" + key
+                line = line + "," + str(val)
+                header = header + "," + key
         if os.stat(file_path).st_size == 0:  # if empty
             f.write(header+"\n")
         f.write(line+"\n")

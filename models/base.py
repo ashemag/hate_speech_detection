@@ -233,7 +233,9 @@ class Network(torch.nn.Module):
         test_statistics['title'] = hyper_params['title']
         self.log_to_comet(experiment, bpm['epoch'], [test_statistics])
         merge_dict = OrderedDict(list(bpm.items()) + list(test_statistics.items()))
-        prepare_output_file(output={test_statistics['title']: merge_dict}, filename=test_results_path, file_action_key='a+')
+        prepare_output_file(output={test_statistics['title']: merge_dict},
+                            filename=test_results_path,
+                            experiment_global=False)
         logger.print(merge_dict)
 
     def compute_train_iteration(self, x_all, y_all, label_mapping):

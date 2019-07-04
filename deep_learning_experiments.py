@@ -9,7 +9,7 @@ from globals import ROOT_DIR
 from data_providers import *
 import os
 
-from models.logistic_regression import logistic_regression
+from models.fc_linear_tdidf import fc_linear_tdidf
 from models.cnn import *
 
 # PARAMS
@@ -42,20 +42,24 @@ def get_args():
 
 
 def extract_data(embedding_key, embedding_level_key, seed):
-    path_data, path_labels = config['DEFAULT']['PATH_DATA'], config['DEFAULT']['PATH_LABELS']
-    p = TextDataProvider()
-    x_train, y_train, x_val, y_val, x_test, y_test = p.extract(path_data, path_labels, embedding_key, embedding_level_key, seed)
+    path_data = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_DATA'])
+    path_labels = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_LABELS'])
+    data_provider = TextDataProvider(path_data, path_labels)
+    if embedding_level_key == 'word':
+        output = data_provider.generate_word_level_embeddings(embedding_key, seed)
+    elif embedding_level_key == 'char':
+        output = data_provider.generate_char_level_embeddings(seed)
+    else:
+        output = data_provider.generate_tdidf_embeddings(seed)
 
-    output = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test,
-              'y_test': y_test}
     if VERBOSE:
         print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(output['x_train']),
-                                                                                  len(output['x_val']),
+                                                                                  len(output['x_valid']),
                                                                                   len(output['x_test'])))
     return output
 
 
-def wrap_data(batch_size, seed, x_train, y_train, x_val, y_val, x_test, y_test):
+def wrap_data(batch_size, seed, x_train, y_train, x_valid, y_valid, x_test, y_test):
     torch.manual_seed(seed)
     np.random.seed(seed)
     torch.backends.cudnn.deterministic = True
@@ -67,34 +71,35 @@ def wrap_data(batch_size, seed, x_train, y_train, x_val, y_val, x_test, y_test):
                                              num_workers=2,
                                              sampler=ImbalancedDatasetSampler(trainset))
 
-    validset = DataProvider(inputs=x_val, targets=y_val, seed=seed)
+    validset = DataProvider(inputs=x_valid, targets=y_valid, seed=seed)
     valid_data = torch.utils.data.DataLoader(validset,
                                              batch_size=batch_size,
-                                             num_workers=2)
+                                             num_workers=2,
+                                             shuffle=True)
 
     testset = DataProvider(inputs=x_test, targets=y_test, seed=seed)
     test_data = torch.utils.data.DataLoader(testset,
                                             batch_size=batch_size,
-                                            num_workers=2)
+                                            num_workers=2,
+                                            shuffle=True)
 
     return train_data, valid_data, test_data
 
 
-def fetch_model(key, input_shape, num_output_classes, dropout):
-    if key == 'CNN_word':
+def fetch_model(embedding_level, input_shape, dropout):
+    if embedding_level == 'word':
         return word_cnn(input_shape, dropout)
-    elif key == 'CNN_character':
+    elif embedding_level == 'character':
         return character_cnn(input_shape)
-    elif key == 'logistic_regression_NA':
-        return logistic_regression(input_shape, num_output_classes)
+    elif embedding_level == 'tdidf':
+        return fc_linear_tdidf(input_shape)
     else:
-        raise ValueError("Model key not found {}".format(key))
+        raise ValueError("Model key not found {}".format(embedding_level))
 
 
-def fetch_model_parameters(args, input_shape, num_output_classes):
-    model_local, criterion_local, optimizer_local = fetch_model(key=args.model + '_' + args.embedding_level,
+def fetch_model_parameters(args, input_shape):
+    model_local, criterion_local, optimizer_local = fetch_model(embedding_level=args.embedding_level,
                                                                 input_shape=input_shape,
-                                                                num_output_classes=num_output_classes,
                                                                 dropout=args.dropout)
     if not args.cpu:
         model_local = model_local.to(model_local.device)
@@ -109,7 +114,7 @@ if __name__ == "__main__":
     data = extract_data(args.embedding, args.embedding_level, args.seed)
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
     input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
-    model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape, len(label_mapping))
+    model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
 
     # OUTPUT
     folder_title = '_'.join([args.model, args.name, args.embedding, args.embedding_level])
@@ -137,4 +142,4 @@ if __name__ == "__main__":
         hyper_params=hyper_params
     )
 
-    print("Total time (min): {:2f}".format(round((time.time() - start) / float(60), 4)))
+    print("Total time (min): {:0.2f}".format(round((time.time() - start) / float(60), 4)))
