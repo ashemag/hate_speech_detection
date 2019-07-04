@@ -122,7 +122,21 @@ def prepare_output_file(filename, output=None, file_action_key='a+'):
         for _, values in output.items():
             break
 
-        writer = csv.DictWriter(csvfile, fieldnames=list(values.keys()))
+        fieldnames = ['title', 'test_acc', 'test_f_score', 'test_f_score_hateful', 'test_f_score_abusive',
+        'num_experiments',
+        'valid_f_score_hateful', 'valid_f_score_abusive', 'epoch', 'train_loss', 'train_acc', 'train_f_score',
+        'train_f_score_hateful', 'train_precision_hateful', 'train_recall_hateful', 'train_f_score_abusive',
+        'train_precision_abusive', 'train_recall_abusive', 'train_f_score_normal', 'train_precision_normal',
+        'train_recall_normal', 'train_f_score_spam', 'train_precision_spam', 'train_recall_spam', 'learning_rate',
+        'valid_loss', 'valid_acc', 'valid_f_score', 'valid_precision_hateful', 'valid_recall_hateful',
+        'valid_precision_abusive', 'valid_recall_abusive', 'valid_f_score_normal', 'valid_precision_normal',
+        'valid_recall_normal', 'valid_f_score_spam', 'valid_precision_spam', 'valid_recall_spam', 'test_loss',
+        'test_precision_hateful', 'test_recall_hateful',
+        'test_precision_abusive', 'test_recall_abusive', 'test_f_score_normal',
+        'test_precision_normal', 'test_recall_normal', 'test_f_score_spam', 'test_precision_spam', 'test_recall_spam',
+        ]
+
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if not file_exists or file_action_key == 'w':
             writer.writeheader()
         for _, value in output.items():

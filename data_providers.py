@@ -136,7 +136,7 @@ class LogisticRegressionDataProvider(object):
 class TextDataProvider(object):
     @staticmethod
     def _fetch_model(tweets_corpus, key, saved_flag=True):
-        print("Using {} embeddings".format(key))
+        print("[Model] Using {} embeddings".format(key))
         if key == 'google':
             embed_dim = GOOGLE_EMBED_DIM
             filename = 'data/GoogleNews-vectors-negative300.bin'

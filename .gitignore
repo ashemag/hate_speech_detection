@@ -69,3 +69,4 @@ scripts*
 .comet.config
 .DS_Store
 *config*
+*checkpoints*

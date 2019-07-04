@@ -70,14 +70,12 @@ def wrap_data(batch_size, seed, x_train, y_train, x_val, y_val, x_test, y_test):
     validset = DataProvider(inputs=x_val, targets=y_val, seed=seed)
     valid_data = torch.utils.data.DataLoader(validset,
                                              batch_size=batch_size,
-                                             num_workers=2,
-                                             sampler=validset)
+                                             num_workers=2)
 
     testset = DataProvider(inputs=x_test, targets=y_test, seed=seed)
     test_data = torch.utils.data.DataLoader(testset,
                                             batch_size=batch_size,
-                                            num_workers=2,
-                                            sampler=testset)
+                                            num_workers=2)
 
     return train_data, valid_data, test_data
 
