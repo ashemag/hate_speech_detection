@@ -10,19 +10,17 @@ import numpy as np
 from preprocessor import Preprocessor
 
 
-VERBOSE = True
-
-
-def split_data(x, y):
+def split_data(x, y, verbose=False):
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.2, random_state=1)
 
     x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.1, random_state=1)
-    print("[Class %] Hateful in train: {}, hateful in val: {}, hateful in test: {}"
-          .format(round(y_train.count(0)/len(y_train), 2),
-                  round(y_val.count(0)/len(y_val), 2),
-                  round(y_test.count(0)/len(y_test), 2)
-                  )
-          )
+    if verbose:
+        print("[Class %] Hateful in train: {}, hateful in val: {}, hateful in test: {}"
+              .format(round(y_train.count(0)/len(y_train), 2),
+                      round(y_val.count(0)/len(y_val), 2),
+                      round(y_test.count(0)/len(y_test), 2)
+                      )
+              )
     return x_train, y_train, x_val, y_val, x_test, y_test
 
 

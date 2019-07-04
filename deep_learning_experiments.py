@@ -3,18 +3,20 @@ Runs baseline experiments
 """
 from comet_ml import Experiment
 import argparse
+import configparser
 from torch import optim
 from globals import ROOT_DIR
-from models.cnn import *
 from data_providers import *
-import pickle
 import os
+
 from models.logistic_regression import logistic_regression
+from models.cnn import *
 
 # PARAMS
 VERBOSE = True
-FILENAME = 'data/80k_tweets.json'
-FILENAME_LABELS = 'data/labels.csv'
+
+config = configparser.ConfigParser()
+config.read('config.ini')
 
 
 def get_args():
@@ -30,8 +32,8 @@ def get_args():
     parser.add_argument('--name', type=str, default='CNN_Experiment')
     parser.add_argument('--embedding', type=str, default='NA')
     parser.add_argument('--embedding_level', type=str, default='NA')
-    parser.add_argument('--batch_size', type=str, default=64)
-
+    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--dropout', type=float, default=.5)
 
     if VERBOSE:
         arg_str = [(str(key), str(value)) for (key, value) in vars(parser.parse_args()).items()]
@@ -40,31 +42,18 @@ def get_args():
 
 
 def extract_data(embedding_key, embedding_level_key, model):
+    path_data, path_labels = config['DEFAULT']['PATHNAME_DATA'], config['DEFAULT']['PATH_LABELS']
     if model == 'CNN':
-        saved_flag = False
-        if not saved_flag:
-            p = CNNTextDataProvider()
-            x_train, y_train, x_val, y_val, x_test, y_test = p.extract(FILENAME, FILENAME_LABELS, embedding_key, embedding_level_key)
-            res = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test, 'y_test': y_test}
+        p = CNNTextDataProvider()
+        x_train, y_train, x_val, y_val, x_test, y_test = p.extract(path_data, path_labels, embedding_key, embedding_level_key)
 
-            # for key, value in d.items():
-            #     path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(key))
-            #     with open(path, 'wb') as f:
-            #         pickle.dump(value, f)
-        else:
-            res = []
-            for val in ['x_train', 'y_train', 'x_val', 'y_val', 'x_test', 'y_test']:
-                path = os.path.join(ROOT_DIR, 'data/{}.obj'.format(val))
-                with open(path, 'rb') as f:
-                    res.append(pickle.load(f))
-        if VERBOSE:
-            print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(res['x_train']),
-                                                                                      len(res['x_val']),
-                                                                                      len(res['x_test'])
-                                                                                      ))
-        return res
-    else:
-        return LogisticRegressionDataProvider().extract(FILENAME, FILENAME_LABELS)
+    output = {'x_train': x_train, 'y_train': y_train, 'x_val': x_val, 'y_val': y_val, 'x_test': x_test,
+              'y_test': y_test}
+    if VERBOSE:
+        print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(output['x_train']),
+                                                                                  len(output['x_val']),
+                                                                                  len(output['x_test'])))
+    return output
 
 
 def wrap_data(batch_size, seed, x_train, y_train, x_val, y_val, x_test, y_test):
@@ -94,9 +83,9 @@ def wrap_data(batch_size, seed, x_train, y_train, x_val, y_val, x_test, y_test):
     return train_data, valid_data, test_data
 
 
-def fetch_model(key, input_shape, num_output_classes):
+def fetch_model(key, input_shape, num_output_classes, dropout):
     if key == 'CNN_word':
-        return word_cnn(input_shape)
+        return word_cnn(input_shape, dropout)
     elif key == 'CNN_character':
         return character_cnn(input_shape)
     elif key == 'logistic_regression_NA':
@@ -108,7 +97,8 @@ def fetch_model(key, input_shape, num_output_classes):
 def fetch_model_parameters(args, input_shape, num_output_classes):
     model_local, criterion_local, optimizer_local = fetch_model(key=args.model + '_' + args.embedding_level,
                                                                 input_shape=input_shape,
-                                                                num_output_classes=num_output_classes)
+                                                                num_output_classes=num_output_classes,
+                                                                dropout=args.dropout)
     if not args.cpu:
         model_local = model_local.to(model_local.device)
 
@@ -139,7 +129,8 @@ if __name__ == "__main__":
         'scheduler': scheduler,
         'num_epochs': args.num_epochs,
         'optimizer': optimizer,
-        'batch_size': args.batch_size
+        'batch_size': args.batch_size,
+        'dropout': args.dropout,
     }
 
     model.train_evaluate(

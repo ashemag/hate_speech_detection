@@ -9,7 +9,7 @@ WEIGHT_DECAY = 1e-4
 
 
 class CNN(Network):
-    def __init__(self, input_shape, dim_reduction_type, num_output_classes, num_filters, num_layers, use_bias=False):
+    def __init__(self, input_shape, num_output_classes, num_filters, num_layers, dropout=.5, use_bias=False):
         """
         Initializes a convolutional network module object.
         :param input_shape: The shape of the inputs going in to the network.
@@ -26,8 +26,7 @@ class CNN(Network):
         self.num_output_classes = num_output_classes
         self.use_bias = use_bias
         self.num_layers = num_layers
-        self.dim_reduction_type = dim_reduction_type
-        self.drop = nn.Dropout(p=0.5, inplace=False)
+        self.drop = nn.Dropout(p=dropout, inplace=False)
 
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
@@ -252,11 +251,11 @@ class CharacterCNN(Network):
         self.logit_linear_layer.reset_parameters()
 
 
-def word_cnn(input_shape):
+def word_cnn(input_shape, dropout):
     model = CNN(num_output_classes=4,
-                num_filters=64,
+                num_filters=32,
                 num_layers=3,
-                dim_reduction_type='max_pooling',
+                dropout=dropout,
                 input_shape=input_shape)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)

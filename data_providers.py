@@ -105,16 +105,28 @@ class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
 
 
 class LogisticRegressionDataProvider(object):
-    def extract(self, filename_data, filename_labels):
-        data = extract_labels(filename_labels)
-        raw_tweets, labels = extract_tweets(data, filename_data)
+    def __init__(self, path_data, path_labels):
+        self.path_data = path_data
+        self.path_labels = path_labels
+
+    def extract(self, verbose=True):
+        data = extract_labels(self.path_labels)
+        raw_tweets, labels = extract_tweets(data, self.path_data)
         x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, labels)
 
         vectorizer = TfidfVectorizer(use_idf=True, max_features=10000, stop_words='english')
-        x_tfidf_train = vectorizer.fit_transform(x_train).todense()
-        x_tfidf_val = vectorizer.transform(x_val).todense()
-        x_tfidf_test = vectorizer.transform(x_test).todense()
-        return x_tfidf_train, y_train, x_tfidf_val, y_val, x_tfidf_test, y_test
+
+        output = {'x_train': vectorizer.fit_transform(x_train).todense(),
+                  'y_train': y_train,
+                  'x_val': vectorizer.transform(x_val).todense(),
+                  'y_val': y_val,
+                  'x_test': vectorizer.transform(x_test).todense(),
+                  'y_test': y_test}
+        if verbose:
+            print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(output['x_train']),
+                                                                                      len(output['x_val']),
+                                                                                      len(output['x_test'])))
+
 
 
 class CNNTextDataProvider(object):

@@ -68,3 +68,4 @@ scripts*
 *results*
 .comet.config
 .DS_Store
+*config*

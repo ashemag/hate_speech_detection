@@ -8,7 +8,7 @@ from gensim.test.utils import get_tmpfile
 from matplotlib import pyplot
 from sklearn.decomposition import PCA
 import numpy as np
-from baseline_experiment import extract_data, LogisticRegressionDataProvider
+from deep_learning_experiments import extract_data, LogisticRegressionDataProvider
 from data_providers import CNNTextDataProvider
 
 EMBED_DIM = 200

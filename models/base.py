@@ -189,7 +189,8 @@ class Network(torch.nn.Module):
 
         experiment = OfflineExperiment(project_name=results_dir.split('/')[-1],
                                        workspace="ashemag",
-                                       offline_directory=results_dir)
+                                       offline_directory=results_dir,
+                                       api_key="bahH25CJj2oHsJiHr6m27pKOh")
         experiment.set_filename('experiment_{}'.format(hyper_params['seed']))
         experiment.set_name('experiment_{}'.format(hyper_params['seed']))
 

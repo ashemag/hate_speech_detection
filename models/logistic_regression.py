@@ -3,8 +3,6 @@ import torch.nn as nn
 from models.base import Network
 import torch.nn.functional as F
 
-WEIGHT_DECAY = 1e-4
-
 
 class LogisticRegression(Network):
     def __init__(self, input_shape, num_output_classes, num_layers):
@@ -20,31 +18,38 @@ class LogisticRegression(Network):
         out = x
         print('[Build module] Initial input shape is {}'.format(out.shape))
         print(out.shape)
-        for i in range(self.num_layers):
-            self.layer_dict['linear_{}'.format(i)] = nn.Linear(out.shape[1], self.num_output_classes)
-            out = self.layer_dict['linear_{}'.format(i)](out)
-            out = F.leaky_relu(out)
+        # for i in range(self.num_layers):
+        #     self.layer_dict['linear_{}'.format(i)] = nn.Linear(out.shape[1], self.num_output_classes)
+        #     out = self.layer_dict['linear_{}'.format(i)](out)
+        #     out = F.leaky_relu(out)
 
-        # make linear
-        self.layer_dict['linear_{}'.format('final')] = nn.Linear(out.shape[1], self.num_output_classes)
-        out = self.layer_dict['linear_{}'.format('final')](out)
-        print("[Build module] Final output shape is {}".format(out.shape))
+        # # make linear
+        self.layer_dict['linear'] = nn.Linear(out.shape[1], self.num_output_classes)
+        out = self.layer_dict['linear'](out)
+        out = F.log_softmax(out)
+
+        # print("[Build module] Final output shape is {}".format(out.shape))
         return out
 
     def forward(self, x):
         out = x
-        for i in range(self.num_layers):
-            out = self.layer_dict['linear_{}'.format(i)](out)
-            out = F.leaky_relu(out)
+        # for i in range(self.num_layers):
+        #     out = self.layer_dict['linear_{}'.format(i)](out)
+        #     out = F.leaky_relu(out)
 
         # make linear
-        out = self.layer_dict['linear_{}'.format('final')](out)
+        out = self.layer_dict['linear'](out)
+        out = F.log_softmax(out)
         return out
 
 
 def logistic_regression(input_shape, num_output_classes):
     model = LogisticRegression(input_shape, num_output_classes, num_layers=1)
-    criterion = torch.nn.CrossEntropyLoss()
+    #criterion = torch.nn.CrossEntropyLoss()
     #optimizer = torch.optim.SGD(model.parameters(), lr=1e-4, momentum=0.9)
-    optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    criterion = nn.NLLLoss()  # same as CELoss except it does the log softmax for you.
+
+    # optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
     return model, criterion, optimizer
+
