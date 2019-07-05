@@ -9,6 +9,7 @@ import numpy as np
 import time
 from sklearn.metrics import f1_score, precision_score, recall_score
 from utils import prepare_output_file
+from globals import ROOT_DIR
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
 DEBUG = True
@@ -86,12 +87,12 @@ class ExperimentBuilder(nn.Module):
         # (in case batch normalization or other methods have different procedures for training and evaluation)
         self.train()
 
-        x = x.to(self.device).float()
+        x = x.float().to(self.device)
         y = y.to(self.device)
 
         out = self.model.forward(x)  # forward the data in the model
-        loss = F.cross_entropy(input=out, target=y)  # compute loss
-
+        # loss = F.cross_entropy(input=out, target=y)  # compute loss
+        loss = self.criterion(out, y)
         self.optimizer.zero_grad()  # set all weight grads from previous training iters to 0
         loss.backward()  # backpropagate to compute gradients for current iter loss
 
@@ -111,10 +112,11 @@ class ExperimentBuilder(nn.Module):
         """
         self.eval()  # sets the system to validation mode
 
-        x = x.to(self.device).float()
+        x = x.float().to(self.device)
         y = y.to(self.device)
         out = self.model.forward(x)  # forward the data in the model
-        loss = F.cross_entropy(out, y)  # compute loss
+        loss = self.criterion(out, y)
+        # loss = F.cross_entropy(out, y)  # compute loss
         _, predicted = torch.max(out.data, 1)  # get argmax of predictions
         accuracy = np.mean(list(predicted.eq(y.data).cpu()))
         stats['{}_acc'.format(experiment_key)].append(accuracy)  # compute accuracy
@@ -143,9 +145,10 @@ class ExperimentBuilder(nn.Module):
         :param model_idx: The index to save the model with.
         :return: best val idx and best val model acc, also it loads the network state into the system state without returning it
         """
+        print("MODEL SAVE DIR: {}...".format(model_save_dir))
+        print("Model being loaded...{}".format(os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx)))))
         state = torch.load(f=os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx))))
         self.load_state_dict(state_dict=state['network'])
-        return state['best_val_model_idx'], state['best_val_model_criteria'], state
 
     @staticmethod
     def compute_f_metrics(stats, y_true, predicted, type_key):
@@ -185,6 +188,8 @@ class ExperimentBuilder(nn.Module):
         if criteria > self.best_val_model_criteria:  # if current epoch's mean val acc is greater than the saved best val acc then
             self.best_val_model_criteria = criteria  # set the best val model acc to be current epoch's val accuracy
             self.best_val_model_idx = epoch_idx  # set the experiment-wise best val idx to be the current epoch's idx
+            print("bpm network")
+            print(self.state['network'])
 
     @staticmethod
     def iter_logs(stats, start_time, index):
@@ -224,8 +229,7 @@ class ExperimentBuilder(nn.Module):
                 if not DEBUG:
                     self.experiment.log_metric(name=key, value=epoch_stats[key], step=epoch_idx)
 
-            epoch_stats['epoch'] = epoch_idx + 1
-            self.save_best_performing_model(epoch_stats, epoch_idx)
+            epoch_stats['epoch'] = epoch_idx
             train_stats["epoch_{}".format(epoch_idx)] = epoch_stats
 
             self.iter_logs(epoch_stats, epoch_start_time, epoch_idx)
@@ -237,17 +241,22 @@ class ExperimentBuilder(nn.Module):
 
             self.save_model(model_save_dir=self.experiment_saved_models,
                             model_save_name="train_model",
-                            model_idx=epoch_idx, state=self.state)
+                            model_idx=epoch_idx,
+                            state=self.state)
+            self.save_best_performing_model(epoch_stats=epoch_stats, epoch_idx=epoch_idx)
 
         ### EXPERIMENTS END ###
         # save train statistics
         prepare_output_file(filename="{}/{}".format(self.experiment_folder, "train_statistics_{}.csv".format(self.seed)),
                             output=list(train_stats.values()))
 
-        print("Generating test set evaluation metrics")
+        print("Generating test set evaluation metrics with best model index {}".format(self.best_val_model_idx))
+
         self.load_model(model_save_dir=self.experiment_saved_models,
                         model_idx=self.best_val_model_idx,
                         model_save_name="train_model")
+
+        print(self.state['network'])
 
         test_stats_run = defaultdict(list)
         with tqdm.tqdm(total=len(self.test_data)) as pbar_test:  # ini a progress bar
@@ -258,11 +267,14 @@ class ExperimentBuilder(nn.Module):
                                                                                   test_stats_run['test_acc'][-1]))
 
         test_stats = {key: np.around(np.mean(value), round_param) for key, value in test_stats_run.items()}
-        print(test_stats)
         test_stats['seed'] = self.seed
         test_stats['title'] = self.experiment_name
         merge_dict = dict(list(test_stats.items()) +
                           list(train_stats["epoch_{}".format(self.best_val_model_idx)].items()))
+
+        merge_dict['epoch'] = self.best_val_model_idx
+        print(merge_dict)
+
         prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv"),
                             output=[merge_dict])
         return train_stats, test_stats

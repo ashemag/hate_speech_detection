@@ -8,7 +8,34 @@ import os
 from sklearn.model_selection import train_test_split
 import numpy as np
 from preprocessor import Preprocessor
+import numpy as np
 
+
+# def split_data(x, y, seed, verbose=True):
+#     rng = np.random.RandomState(seed=seed)
+#     num_samples = len(x)
+#     train_size = int(num_samples * .64)
+#     valid_size = int(num_samples * .16)
+#
+#     train_sample_idx = rng.choice(a=[i for i in range(num_samples)], size=train_size, replace=False)
+#     remaining = [i for i in range(num_samples) if i not in train_sample_idx]
+#     valid_sample_idx = rng.choice(a=[i for i in remaining], size=valid_size, replace=False)
+#     test_sample_idx = [i for i in remaining if i not in valid_sample_idx]
+#
+#     x,y = np.array(x), np.array(y)
+#
+#     x_train, y_train = x[train_sample_idx], y[train_sample_idx]
+#     x_valid, y_valid = x[valid_sample_idx], y[valid_sample_idx]
+#     x_test, y_test = x[test_sample_idx], y[test_sample_idx]
+#
+#     total = len(x_train) + len(x_valid) + len(x_test)
+#     if verbose:
+#         print("[Sizes] Training set: {:.2f}%, Validation set: {:.2f}%, Test set: {:.2f}%".format(
+#             len(x_train) / float(total) * 100,
+#             len(x_valid) / float(total) * 100,
+#             len(x_test) / float(total) * 100))
+#
+#     return x_train, y_train, x_valid, y_valid, x_test, y_test
 
 def split_data(x, y, seed, verbose=True):
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.20, random_state=seed)
