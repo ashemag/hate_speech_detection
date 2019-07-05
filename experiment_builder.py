@@ -2,19 +2,16 @@ from comet_ml import OfflineExperiment
 from collections import defaultdict, OrderedDict
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
 import tqdm
 import os
 import numpy as np
 import time
-
 from sklearn.metrics import f1_score, precision_score, recall_score
-
-from storage_utils import save_statistics
 from utils import prepare_output_file
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
+DEBUG = True
 
 
 class ExperimentBuilder(nn.Module):
@@ -39,7 +36,7 @@ class ExperimentBuilder(nn.Module):
 
         # re-initialize network parameters
         self.train_data = train_data
-        self.val_data = valid_data
+        self.valid_data = valid_data
         self.test_data = test_data
         self.optimizer = hyper_params['optimizer']
 
@@ -63,12 +60,13 @@ class ExperimentBuilder(nn.Module):
         self.state = dict()
 
         # Comet visualizations
-        experiment = OfflineExperiment(project_name=self.experiment_folder.split('/')[-1],
-                                       workspace="ashemag",
-                                       offline_directory="{}/{}".format(self.experiment_folder, 'comet'))
-        experiment.set_filename('experiment_{}'.format(hyper_params['seed']))
-        experiment.set_name('experiment_{}'.format(hyper_params['seed']))
-        experiment.log_parameters(hyper_params)
+        if not DEBUG:
+            self.experiment = OfflineExperiment(project_name=self.experiment_folder.split('/')[-1],
+                                           workspace="ashemag",
+                                           offline_directory="{}/{}".format(self.experiment_folder, 'comet'))
+            self.experiment.set_filename('experiment_{}'.format(hyper_params['seed']))
+            self.experiment.set_name('experiment_{}'.format(hyper_params['seed']))
+            self.experiment.log_parameters(hyper_params)
 
     def get_num_parameters(self):
         total_num_params = 0
@@ -102,7 +100,7 @@ class ExperimentBuilder(nn.Module):
         accuracy = np.mean(list(predicted.eq(y.data).cpu()))  # compute accuracy
         stats['{}_acc'.format(experiment_key)].append(accuracy)
         stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
-        self.compute_f_metrics(stats, y, predicted, 'train')
+        self.compute_f_metrics(stats, y, predicted, experiment_key)
 
     def run_evaluation_iter(self, x, y, stats, experiment_key='valid'):
         """
@@ -215,8 +213,8 @@ class ExperimentBuilder(nn.Module):
                     pbar_train.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['train_loss'][-1],
                                                                                        epoch_stats['train_acc'][-1]))
 
-            with tqdm.tqdm(total=len(self.val_data)) as pbar_val:  # create a progress bar for validation
-                for x, y in self.val_data:  # get data batches
+            with tqdm.tqdm(total=len(self.valid_data)) as pbar_val:  # create a progress bar for validation
+                for x, y in self.valid_data:  # get data batches
                     self.run_evaluation_iter(x=x, y=y, stats=epoch_stats)  # run a validation iter
                     pbar_val.update(1)  # add 1 step to the progress bar
                     pbar_val.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['valid_loss'][-1],
@@ -227,7 +225,10 @@ class ExperimentBuilder(nn.Module):
             # save to train stats
             for key, value in epoch_stats.items():
                 epoch_stats[key] = np.around(np.mean(value), round_param)
-            epoch_stats['epoch'] = epoch_idx
+                if not DEBUG:
+                    self.experiment.log_metric(name=key, value=epoch_stats[key], step=epoch_idx)
+
+            epoch_stats['epoch'] = epoch_idx + 1
             train_stats["epoch_{}".format(epoch_idx)] = epoch_stats
 
             self.iter_logs(epoch_stats, epoch_start_time, epoch_idx)
