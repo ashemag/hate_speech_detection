@@ -158,7 +158,7 @@ class ExperimentBuilder(nn.Module):
             average='weighted'
         )
 
-        stats[type_key + '_f_score'] = f1score_overall
+        stats[type_key + '_f_score'].append(f1score_overall)
 
         f1scores = f1_score(
             y_true.cpu().detach().numpy(),
@@ -178,9 +178,9 @@ class ExperimentBuilder(nn.Module):
         )
 
         for i in range(len(f1scores)):
-            stats[type_key + '_f_score_' + LABEL_MAPPING[i]] = f1scores[i]
-            stats[type_key + '_precision_' + LABEL_MAPPING[i]] = precision[i]
-            stats[type_key + '_recall_' + LABEL_MAPPING[i]] = recall[i]
+            stats[type_key + '_f_score_' + LABEL_MAPPING[i]].append(f1scores[i])
+            stats[type_key + '_precision_' + LABEL_MAPPING[i]].append(precision[i])
+            stats[type_key + '_recall_' + LABEL_MAPPING[i]].append(recall[i])
 
     def save_best_performing_model(self, epoch_stats, epoch_idx):
         metrics_to_aggregate = [epoch_stats[item] for item in ['valid_f_score_abusive', 'valid_f_score_hateful']]
@@ -197,7 +197,7 @@ class ExperimentBuilder(nn.Module):
                               for key, value in stats.items() if key != 'epoch'])
         epoch_elapsed_time = (time.time() - start_time) / 60  # calculate time taken for epoch
         epoch_elapsed_time = "{:.4f}".format(epoch_elapsed_time)
-        print("===Epoch {}===\n{}===Elapsed time: {} mins===".format(index, out_string, epoch_elapsed_time))
+        print("\n===Epoch {}===\n{}===Elapsed time: {} mins===".format(index, out_string, epoch_elapsed_time))
 
     def run_experiment(self, round_param=4):
         """
@@ -221,6 +221,7 @@ class ExperimentBuilder(nn.Module):
                     pbar_val.update(1)  # add 1 step to the progress bar
                     pbar_val.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['valid_loss'][-1],
                                                                                      epoch_stats['valid_acc'][-1]))
+
             self.save_best_performing_model(epoch_stats, epoch_idx)
 
             # save to train stats
@@ -242,7 +243,7 @@ class ExperimentBuilder(nn.Module):
 
         ### EXPERIMENTS END ###
         # save train statistics
-        prepare_output_file(filename="{}/{}".format(self.experiment_folder, "train_statistics.csv"),
+        prepare_output_file(filename="{}/{}".format(self.experiment_folder, "train_statistics_{}.csv".format(self.seed)),
                             output=list(train_stats.values()))
 
         print("Generating test set evaluation metrics")
@@ -264,6 +265,6 @@ class ExperimentBuilder(nn.Module):
         merge_dict = dict(list(test_stats.items()) +
                           list(train_stats["epoch_{}".format(self.best_val_model_idx)].items()))
 
-        prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv"),
+        prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv".format(self.seed)),
                             output=[merge_dict])
         return train_stats, test_stats
