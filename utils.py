@@ -110,7 +110,7 @@ def extract_tweets(data, filename, subset=None):
     return tweets, labels
 
 
-def prepare_output_file(filename, output=None, file_action_key='a+', experiment_global=True):
+def prepare_output_file(filename, output=None, file_action_key='a+'):
     """
 
     :param filename:
@@ -121,38 +121,14 @@ def prepare_output_file(filename, output=None, file_action_key='a+', experiment_
     """
     file_exists = os.path.isfile(filename)
 
-    if output is None:
-        raise ValueError("Please specify output to write to output file.")
+    if output is None or output == []:
+        raise ValueError("Please specify output list to write to output file.")
     with open(filename, file_action_key) as csvfile:
-        fieldnames = ['title', 'test_acc', 'test_f_score', 'test_f_score_hateful', 'test_f_score_abusive',
-                      'num_experiments', 'epoch',
-                      'valid_f_score_hateful', 'valid_f_score_abusive', 'train_loss', 'train_acc',
-                      'train_f_score',
-                      'train_f_score_hateful', 'train_precision_hateful', 'train_recall_hateful',
-                      'train_f_score_abusive',
-                      'train_precision_abusive', 'train_recall_abusive', 'train_f_score_normal',
-                      'train_precision_normal',
-                      'train_recall_normal', 'train_f_score_spam', 'train_precision_spam', 'train_recall_spam',
-                      'learning_rate',
-                      'valid_loss', 'valid_acc', 'valid_f_score', 'valid_precision_hateful', 'valid_recall_hateful',
-                      'valid_precision_abusive', 'valid_recall_abusive', 'valid_f_score_normal',
-                      'valid_precision_normal',
-                      'valid_recall_normal', 'valid_f_score_spam', 'valid_precision_spam', 'valid_recall_spam',
-                      'test_loss',
-                      'test_precision_hateful', 'test_recall_hateful',
-                      'test_precision_abusive', 'test_recall_abusive', 'test_f_score_normal',
-                      'test_precision_normal', 'test_recall_normal', 'test_f_score_spam', 'test_precision_spam',
-                      'test_recall_spam',
-                      ]
-
-        for _, values in output.items():
-            if not experiment_global:
-                fieldnames = list(values.keys())
-            break
-
+        fieldnames = output[0].keys()
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        if not file_exists or file_action_key == 'w':
+
+        if not file_exists or file_action_key == 'w' or os.path.getsize(filename) == 0:
             writer.writeheader()
 
-        for _, value in output.items():
-            writer.writerow(value)
+        for entry in output:
+            writer.writerow(entry)

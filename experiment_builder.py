@@ -1,5 +1,5 @@
 from comet_ml import OfflineExperiment
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,6 +12,7 @@ import time
 from sklearn.metrics import f1_score, precision_score, recall_score
 
 from storage_utils import save_statistics
+from utils import prepare_output_file
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
 
@@ -29,7 +30,7 @@ class ExperimentBuilder(nn.Module):
         self.model = network_model
         self.model.reset_parameters()
         self.device = device
-
+        self.seed = hyper_params['seed']
         if torch.cuda.device_count() > 1:
             self.model.to(self.device)
             self.model = nn.DataParallel(module=self.model)
@@ -44,7 +45,6 @@ class ExperimentBuilder(nn.Module):
 
         # Generate the directory names
         self.experiment_folder = hyper_params['results_dir']
-        self.experiment_logs = os.path.abspath(os.path.join(self.experiment_folder, "result_outputs"))
         self.experiment_saved_models = os.path.abspath(os.path.join(self.experiment_folder, "saved_models"))
 
         # Set best models to be at 0 since we are just starting
@@ -53,9 +53,6 @@ class ExperimentBuilder(nn.Module):
 
         if not os.path.exists(self.experiment_folder):  # If experiment directory does not exist
             os.mkdir(self.experiment_folder)  # create the experiment directory
-
-        if not os.path.exists(self.experiment_logs):
-            os.mkdir(self.experiment_logs)  # create the experiment log directory
 
         if not os.path.exists(self.experiment_saved_models):
             os.mkdir(self.experiment_saved_models)  # create the experiment saved models directory
@@ -68,7 +65,7 @@ class ExperimentBuilder(nn.Module):
         # Comet visualizations
         experiment = OfflineExperiment(project_name=self.experiment_folder.split('/')[-1],
                                        workspace="ashemag",
-                                       offline_directory=self.experiment_folder)
+                                       offline_directory="{}/{}".format(self.experiment_folder, 'comet'))
         experiment.set_filename('experiment_{}'.format(hyper_params['seed']))
         experiment.set_name('experiment_{}'.format(hyper_params['seed']))
         experiment.log_parameters(hyper_params)
@@ -103,8 +100,8 @@ class ExperimentBuilder(nn.Module):
         self.optimizer.step()  # update network parameters
         _, predicted = torch.max(out.data, 1)  # get argmax of predictions
         accuracy = np.mean(list(predicted.eq(y.data).cpu()))  # compute accuracy
-        stats['{}_acc'.format(experiment_key)] = accuracy
-        stats['{}_loss'.format(experiment_key)] = loss.data.detach().cpu().numpy()
+        stats['{}_acc'.format(experiment_key)].append(accuracy)
+        stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
         self.compute_f_metrics(stats, y, predicted, 'train')
 
     def run_evaluation_iter(self, x, y, stats, experiment_key='valid'):
@@ -121,8 +118,9 @@ class ExperimentBuilder(nn.Module):
         out = self.model.forward(x)  # forward the data in the model
         loss = F.cross_entropy(out, y)  # compute loss
         _, predicted = torch.max(out.data, 1)  # get argmax of predictions
-        stats['{}_acc'.format(experiment_key)] = np.mean(list(predicted.eq(y.data).cpu()))  # compute accuracy
-        stats['{}_loss'.format(experiment_key)] = loss.data.detach().cpu().numpy()
+        accuracy = np.mean(list(predicted.eq(y.data).cpu()))
+        stats['{}_acc'.format(experiment_key)].append(accuracy)  # compute accuracy
+        stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
         self.compute_f_metrics(stats, y, predicted, experiment_key)
 
     def save_model(self, model_save_dir, model_save_name, model_idx, state):
@@ -192,47 +190,46 @@ class ExperimentBuilder(nn.Module):
             self.best_val_model_criteria = criteria  # set the best val model acc to be current epoch's val accuracy
             self.best_val_model_idx = epoch_idx  # set the experiment-wise best val idx to be the current epoch's idx
 
-    def run_experiment(self):
+    @staticmethod
+    def iter_logs(stats, start_time, index):
+        # Log results to terminal
+        out_string = "".join(["{}: {:0.4f}\n".format(key, value)
+                              for key, value in stats.items() if key != 'epoch'])
+        epoch_elapsed_time = (time.time() - start_time) / 60  # calculate time taken for epoch
+        epoch_elapsed_time = "{:.4f}".format(epoch_elapsed_time)
+        print("===Epoch {}===\n{}===Elapsed time: {} mins===".format(index, out_string, epoch_elapsed_time))
+
+    def run_experiment(self, round_param=4):
         """
         Runs experiment train and evaluation iterations, saving the model and best val model and val model accuracy after each epoch
         :return: The summary current_epoch_losses from starting epoch to total_epochs.
         """
-        train_stats = defaultdict(list)
+        train_stats = OrderedDict()
         for i, epoch_idx in enumerate(range(self.starting_epoch, self.num_epochs)):
             epoch_start_time = time.time()
             epoch_stats = defaultdict(list)
-
             with tqdm.tqdm(total=len(self.train_data)) as pbar_train:  # create a progress bar for training
                 for idx, (x, y) in enumerate(self.train_data):  # get data batches
                     self.run_train_iter(x=x, y=y, stats=epoch_stats)  # take a training iter step
                     pbar_train.update(1)
-                    pbar_train.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['train_loss'],
-                                                                                       epoch_stats['train_acc']))
+                    pbar_train.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['train_loss'][-1],
+                                                                                       epoch_stats['train_acc'][-1]))
 
             with tqdm.tqdm(total=len(self.val_data)) as pbar_val:  # create a progress bar for validation
                 for x, y in self.val_data:  # get data batches
                     self.run_evaluation_iter(x=x, y=y, stats=epoch_stats)  # run a validation iter
                     pbar_val.update(1)  # add 1 step to the progress bar
-                    pbar_val.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['valid_loss'],
-                                                                                     epoch_stats['valid_acc']))
-
+                    pbar_val.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['valid_loss'][-1],
+                                                                                     epoch_stats['valid_acc'][-1]))
             self.save_best_performing_model(epoch_stats, epoch_idx)
 
-            # get mean of all metrics of current epoch metrics dict,
-            # to get them ready for storage and output on the terminal.
+            # save to train stats
             for key, value in epoch_stats.items():
-                train_stats[key].append(np.mean(value))
+                epoch_stats[key] = np.around(np.mean(value), round_param)
+            epoch_stats['epoch'] = epoch_idx
+            train_stats["epoch_{}".format(epoch_idx)] = epoch_stats
 
-            train_stats['curr_epoch'].append(epoch_idx)
-            save_statistics(experiment_log_dir=self.experiment_logs, filename='summary.csv',
-                            stats_dict=train_stats, current_epoch=i,
-                            continue_from_mode=True if (self.starting_epoch != 0 or i > 0) else False) # save statistics to stats file.
-
-            # Log results to terminal
-            out_string = "_".join(["{}_{:.2f}".format(key, np.mean(value)) for key, value in epoch_stats.items()])
-            epoch_elapsed_time = time.time() - epoch_start_time  # calculate time taken for epoch
-            epoch_elapsed_time = "{:.4f}".format(epoch_elapsed_time)
-            print("Epoch {}:".format(epoch_idx), out_string, "epoch time", epoch_elapsed_time, "seconds")
+            self.iter_logs(epoch_stats, epoch_start_time, epoch_idx)
 
             # Save state each epoch
             self.state['current_epoch_idx'] = epoch_idx
@@ -243,9 +240,14 @@ class ExperimentBuilder(nn.Module):
                             model_save_name="train_model",
                             model_idx=epoch_idx, state=self.state)
 
+        ### EXPERIMENTS END ###
+        # save train statistics
+        prepare_output_file(filename="{}/{}".format(self.experiment_folder, "train_statistics.csv"),
+                            output=list(train_stats.values()))
+
         print("Generating test set evaluation metrics")
-        self.load_model(model_save_dir=self.experiment_saved_models, model_idx=self.best_val_model_idx,
-                        # load best validation model
+        self.load_model(model_save_dir=self.experiment_saved_models,
+                        model_idx=self.best_val_model_idx,
                         model_save_name="train_model")
 
         test_stats_run = defaultdict(list)
@@ -253,11 +255,15 @@ class ExperimentBuilder(nn.Module):
             for x, y in self.test_data:  # sample batch
                 self.run_evaluation_iter(x=x, y=y, stats=test_stats_run, experiment_key='test')
                 pbar_test.update(1)  # update progress bar status
-                pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(test_stats_run['test_loss'],
-                                                                                  test_stats_run['test_acc']))
+                pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(test_stats_run['test_loss'][-1],
+                                                                                  test_stats_run['test_acc'][-1]))
 
-        test_stats = {key: [np.mean(value)] for key, value in test_stats_run.items()}
-        save_statistics(experiment_log_dir=self.experiment_logs, filename='test_summary.csv',
-                        stats_dict=test_stats, current_epoch=0, continue_from_mode=False)
+        test_stats = {key: np.around(np.mean(value), round_param) for key, value in test_stats_run.items()}
+        test_stats['seed'] = self.seed
+        test_stats['title'] = self.experiment_name
+        merge_dict = dict(list(test_stats.items()) +
+                          list(train_stats["epoch_{}".format(self.best_val_model_idx)].items()))
 
+        prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv"),
+                            output=[merge_dict])
         return train_stats, test_stats
