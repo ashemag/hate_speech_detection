@@ -181,9 +181,7 @@ class ExperimentBuilder(nn.Module):
             stats[type_key + '_recall_' + LABEL_MAPPING[i]].append(recall[i])
 
     def save_best_performing_model(self, epoch_stats, epoch_idx):
-        metrics_to_aggregate = [epoch_stats[item] for item in ['valid_f_score_abusive', 'valid_f_score_hateful']]
-        metrics = [np.mean(metric) for metric in metrics_to_aggregate]
-        criteria = np.mean(metrics)
+        criteria = epoch_stats['valid_f_score_abusive'] + epoch_stats['valid_f_score_hateful']
         if criteria > self.best_val_model_criteria:  # if current epoch's mean val acc is greater than the saved best val acc then
             self.best_val_model_criteria = criteria  # set the best val model acc to be current epoch's val accuracy
             self.best_val_model_idx = epoch_idx  # set the experiment-wise best val idx to be the current epoch's idx
@@ -220,8 +218,6 @@ class ExperimentBuilder(nn.Module):
                     pbar_val.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['valid_loss'][-1],
                                                                                      epoch_stats['valid_acc'][-1]))
 
-            self.save_best_performing_model(epoch_stats, epoch_idx)
-
             # save to train stats
             for key, value in epoch_stats.items():
                 epoch_stats[key] = np.around(np.mean(value), round_param)
@@ -229,6 +225,7 @@ class ExperimentBuilder(nn.Module):
                     self.experiment.log_metric(name=key, value=epoch_stats[key], step=epoch_idx)
 
             epoch_stats['epoch'] = epoch_idx + 1
+            self.save_best_performing_model(epoch_stats, epoch_idx)
             train_stats["epoch_{}".format(epoch_idx)] = epoch_stats
 
             self.iter_logs(epoch_stats, epoch_start_time, epoch_idx)
@@ -261,11 +258,11 @@ class ExperimentBuilder(nn.Module):
                                                                                   test_stats_run['test_acc'][-1]))
 
         test_stats = {key: np.around(np.mean(value), round_param) for key, value in test_stats_run.items()}
+        print(test_stats)
         test_stats['seed'] = self.seed
         test_stats['title'] = self.experiment_name
         merge_dict = dict(list(test_stats.items()) +
                           list(train_stats["epoch_{}".format(self.best_val_model_idx)].items()))
-
-        prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv".format(self.seed)),
+        prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv"),
                             output=[merge_dict])
         return train_stats, test_stats
