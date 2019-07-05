@@ -46,6 +46,7 @@ class Network(torch.nn.Module):
         self.scheduler = None
         self.gpu = True
         self.state = dict()
+        self.best_model_idx = -1
 
         logger = Logger(stream=sys.stderr)
         logger.disable = False # if disabled does not print info messages.
@@ -198,6 +199,7 @@ class Network(torch.nn.Module):
         bpm = defaultdict(lambda: 0)
         torch.cuda.empty_cache()
         for epoch in range(1, int(self.num_epochs + 1)):
+            print("Best performing model index is currently {}".format(self.best_model_idx))
             train_statistics = self._train_epoch(epoch, train_data, hyper_params['label_mapping'], self.gpu)
             valid_statistics = self._valid_epoch(epoch, valid_data, hyper_params['label_mapping'], self.gpu)
 
@@ -213,6 +215,7 @@ class Network(torch.nn.Module):
             # save bpm statistics
             if (valid_statistics['valid_f_score_hateful'] + valid_statistics['valid_f_score_abusive'])\
                     > (bpm['valid_f_score_hateful'] + bpm['valid_f_score_abusive']):
+                self.best_model_idx = bpm['epoch']
                 for stats in [train_statistics, valid_statistics]:
                     for key, value in stats.items():
                         bpm[key] = value
@@ -287,21 +290,20 @@ class Network(torch.nn.Module):
             output[type_key + '_recall_' + label_mapping[i]] = recall[i]
 
     def compute_valid_iteration(self, type_key, x_all, y_all, label_mapping):
-        with torch.no_grad():
-            self.eval()
-            '''
-            Evaluating accuracy on whole batch 
-            Evaluating accuracy on min examples 
-            '''
-            criterion = self.criterion.cuda()
-            x_all = x_all.float()
-            y_pred_all = self.forward(x_all)
-            loss_all = criterion(input=y_pred_all, target=y_all.view(-1))
-            acc_all = self.compute_batch_accuracy(y_all, y_pred_all)
-            output = {type_key + '_loss': loss_all.data, type_key + '_acc': acc_all}
+        self.eval()
+        '''
+        Evaluating accuracy on whole batch 
+        Evaluating accuracy on min examples 
+        '''
+        criterion = self.criterion.cuda()
+        x_all = x_all.float()
+        y_pred_all = self.forward(x_all)
+        loss_all = criterion(input=y_pred_all, target=y_all.view(-1))
+        acc_all = self.compute_batch_accuracy(y_all, y_pred_all)
+        output = {type_key + '_loss': loss_all.data.detach().cpu().numpy(), type_key + '_acc': acc_all}
 
-            _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
-            self.compute_f_metrics(output, y_all, y_pred_all_int, type_key, label_mapping)
+        _, y_pred_all_int = torch.max(y_pred_all.data, 1)  # argmax of predictions
+        self.compute_f_metrics(output, y_all, y_pred_all_int, type_key, label_mapping)
         return output
 
     def save_model(self, model_save_dir, state):

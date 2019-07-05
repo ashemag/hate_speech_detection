@@ -12,7 +12,7 @@ from preprocessor import Preprocessor
 
 def split_data(x, y, seed, verbose=True):
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.20, random_state=seed)
-    x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.20, random_state=seed)
+    x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.2, random_state=seed)
     total = len(x_train) + len(x_valid) + len(x_test)
     if verbose:
         print("[Sizes] Training set: {:.2f}%, Validation set: {:.2f}%, Test set: {:.2f}%".format(
@@ -20,11 +20,6 @@ def split_data(x, y, seed, verbose=True):
             len(x_valid) / float(total) * 100,
             len(x_test) / float(total) * 100))
 
-    label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
-    y_dict = {'y_train':y_train, 'y_valid':y_valid, 'y_test':y_test}
-    for key, value in y_dict.items():
-        for i in range(4):
-            print("{}: {} {}".format(key, label_mapping[i], value.count(i)/(len(value))))
     return x_train, y_train, x_valid, y_valid, x_test, y_test
 
 
