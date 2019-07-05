@@ -5,6 +5,8 @@ from comet_ml import Experiment
 import argparse
 import configparser
 from torch import optim
+
+from experiment_builder import ExperimentBuilder
 from globals import ROOT_DIR
 from data_providers import *
 import os
@@ -27,7 +29,6 @@ def get_args():
     parser = argparse.ArgumentParser(description='CNN Hate Speech Detection Experiment.')
     parser.add_argument('--seed', type=int, default=28)
     parser.add_argument('--num_epochs', type=int, default=100)
-    parser.add_argument('--cpu', type=bool, default=False)
     parser.add_argument('--model', type=str, default='CNN')
     parser.add_argument('--name', type=str, default='CNN_Experiment')
     parser.add_argument('--embedding', type=str, default='NA')
@@ -60,57 +61,66 @@ def extract_data(embedding_key, embedding_level_key, seed):
 
 
 def wrap_data(batch_size, seed, x_train, y_train, x_valid, y_valid, x_test, y_test):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    train_set = DataProvider(inputs=x_train, targets=y_train, seed=seed)
+    train_data_local = torch.utils.data.DataLoader(train_set,
+                                                   batch_size=batch_size,
+                                                   num_workers=2,
+                                                   sampler=ImbalancedDatasetSampler(train_set))
 
-    trainset = DataProvider(inputs=x_train, targets=y_train, seed=seed)
-    train_data = torch.utils.data.DataLoader(trainset,
-                                             batch_size=batch_size,
-                                             num_workers=2,
-                                             sampler=ImbalancedDatasetSampler(trainset))
+    valid_set = DataProvider(inputs=x_valid, targets=y_valid, seed=seed)
+    valid_data_local = torch.utils.data.DataLoader(valid_set,
+                                                   batch_size=batch_size,
+                                                   num_workers=2,
+                                                   shuffle=True)
 
-    validset = DataProvider(inputs=x_valid, targets=y_valid, seed=seed)
-    valid_data = torch.utils.data.DataLoader(validset,
-                                             batch_size=batch_size,
-                                             num_workers=2,
-                                             shuffle=True)
+    test_set = DataProvider(inputs=x_test, targets=y_test, seed=seed)
+    test_data_local = torch.utils.data.DataLoader(test_set,
+                                                  batch_size=batch_size,
+                                                  num_workers=2,
+                                                  shuffle=True)
 
-    testset = DataProvider(inputs=x_test, targets=y_test, seed=seed)
-    test_data = torch.utils.data.DataLoader(testset,
-                                            batch_size=batch_size,
-                                            num_workers=2,
-                                            shuffle=True)
-
-    return train_data, valid_data, test_data
+    return train_data_local, valid_data_local, test_data_local
 
 
-def fetch_model(embedding_level, input_shape, dropout):
+def fetch_model(embedding_level, input_shape_local, dropout):
     if embedding_level == 'word':
-        return word_cnn(input_shape, dropout)
+        return word_cnn(input_shape_local, dropout)
     elif embedding_level == 'character':
-        return character_cnn(input_shape)
+        return character_cnn(input_shape_local)
     elif embedding_level == 'tdidf':
-        return fc_linear_tdidf(input_shape)
+        return fc_linear_tdidf(input_shape_local)
     else:
         raise ValueError("Model key not found {}".format(embedding_level))
 
 
-def fetch_model_parameters(args, input_shape):
-    model_local, criterion_local, optimizer_local = fetch_model(embedding_level=args.embedding_level,
-                                                                input_shape=input_shape,
-                                                                dropout=args.dropout)
-    if not args.cpu:
-        model_local = model_local.to(model_local.device)
+def fetch_model_parameters(args_local, input_shape_local):
+    model_local, criterion_local, optimizer_local = fetch_model(embedding_level=args_local.embedding_level,
+                                                                input_shape_local=input_shape_local,
+                                                                dropout=args_local.dropout)
 
-    scheduler_local = optim.lr_scheduler.CosineAnnealingLR(optimizer_local, T_max=args.num_epochs, eta_min=0.0001)
+    scheduler_local = optim.lr_scheduler.CosineAnnealingLR(optimizer_local, T_max=args_local.num_epochs, eta_min=0.0001)
     return model_local, criterion_local, optimizer_local, scheduler_local
 
 
+def generate_device(seed):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    if torch.cuda.is_available():  # checks whether a cuda gpu is available and whether the gpu flag is True
+        device_local = torch.cuda.current_device()
+        print("Using {} GPU(s)".format(torch.cuda.device_count()))
+    else:
+        print("Using CPU")
+        device_local = torch.device('cpu')  # sets the device to be CPU
+
+    return device_local
+
+
 if __name__ == "__main__":
-    label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
     args = get_args()
+    device = generate_device(args.seed)
     data = extract_data(args.embedding, args.embedding_level, args.seed)
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
     input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
@@ -118,14 +128,13 @@ if __name__ == "__main__":
 
     # OUTPUT
     folder_title = '_'.join([args.model, args.name, args.embedding, args.embedding_level])
-    print("Writing to folder {}".format(folder_title))
+    print("=== Writing to folder {} ===".format(folder_title))
     results_dir = os.path.join(ROOT_DIR, 'results/{}').format(folder_title)
     start = time.time()
 
     hyper_params = {
         'seed': args.seed,
-        'title': folder_title,
-        'label_mapping': label_mapping,
+        'experiment_name': folder_title,
         'results_dir': results_dir,
         'criterion': criterion,
         'scheduler': scheduler,
@@ -135,11 +144,14 @@ if __name__ == "__main__":
         'dropout': args.dropout,
     }
 
-    model.train_evaluate(
+    experiment = ExperimentBuilder(
+        network_model=model,
+        device=device,
+        hyper_params=hyper_params,
         train_data=train_data,
         valid_data=valid_data,
         test_data=test_data,
-        hyper_params=hyper_params
     )
 
+    experiment_metrics, test_metrics = experiment.run_experiment()  # run experiment and return experiment metrics
     print("Total time (min): {:0.2f}".format(round((time.time() - start) / float(60), 4)))
