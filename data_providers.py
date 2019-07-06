@@ -115,25 +115,27 @@ class TextDataProvider(object):
 
     @staticmethod
     def _fetch_model(tweets_corpus, key):
-        print("[Model] Using {} embeddings".format(key))
         if key == 'google':
+            print("[Model] Using {} embeddings".format(key))
             embed_dim = GOOGLE_EMBED_DIM
             filename = os.path.join(ROOT_DIR, 'data/GoogleNews-vectors-negative300.bin')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         elif key == 'twitter':
+            print("[Model] Using {} embeddings".format(key))
             embed_dim = TWITTER_EMBED_DIM
             filename = os.path.join(ROOT_DIR, 'data/word2vec_twitter_model/word2vec_twitter_model.bin')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
-        elif key == 'fastttext':
+        elif key == 'fasttext':
+            print("[Model] Using {} embeddings".format(key))
+            embed_dim = FASTTEXT_EMBED_DIM
             filename = os.path.join(ROOT_DIR, 'data/wiki-news-300d-1M-subword.vec')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         else:
+            print("[Model] Using {} embeddings".format(key))
             embed_dim = EMBED_DIM
             model = word2vec.Word2Vec(sentences=tweets_corpus, size=embed_dim)
             model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
             word_vectors = model.wv
-            #filename = os.path.join(ROOT_DIR, 'data/keyedvectors.bin')
-            #word_vectors.save(filename)
         return word_vectors, embed_dim
 
     @staticmethod

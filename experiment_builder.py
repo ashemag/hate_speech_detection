@@ -12,7 +12,7 @@ from utils import prepare_output_file
 from globals import ROOT_DIR
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
-DEBUG = True
+DEBUG = False
 
 
 class ExperimentBuilder(nn.Module):
@@ -86,14 +86,17 @@ class ExperimentBuilder(nn.Module):
         # sets model to training mode
         # (in case batch normalization or other methods have different procedures for training and evaluation)
         self.train()
+        if type(x) is np.ndarray:
+            x, y = torch.Tensor(x).float().to(device=self.device), torch.Tensor(y).long().to(
+                device=self.device)  # convert data to pytorch tensors and send to the computation device
 
-        x = x.float().to(self.device)
+        x = x.to(self.device)
+        x = x.float()
         y = y.to(self.device)
-
+        self.optimizer.zero_grad()  # set all weight grads from previous training iters to 0
         out = self.model.forward(x)  # forward the data in the model
         # loss = F.cross_entropy(input=out, target=y)  # compute loss
         loss = self.criterion(out, y)
-        self.optimizer.zero_grad()  # set all weight grads from previous training iters to 0
         loss.backward()  # backpropagate to compute gradients for current iter loss
 
         self.optimizer.step()  # update network parameters
@@ -111,8 +114,12 @@ class ExperimentBuilder(nn.Module):
         :return: the loss and accuracy for this batch
         """
         self.eval()  # sets the system to validation mode
+        if type(x) is np.ndarray:
+            x, y = torch.Tensor(x).float().to(device=self.device), torch.Tensor(y).long().to(
+                device=self.device)  # convert data to pytorch tensors and send to the computation device
 
-        x = x.float().to(self.device)
+        x = x.to(self.device)
+        x = x.float()
         y = y.to(self.device)
         out = self.model.forward(x)  # forward the data in the model
         loss = self.criterion(out, y)
@@ -134,8 +141,14 @@ class ExperimentBuilder(nn.Module):
         :param state: The dictionary containing the system state.
 
         """
+        # Save state each epoch
+        self.state['current_epoch_idx'] = model_idx
+        self.state['best_val_model_criteria'] = self.best_val_model_criteria
+        self.state['best_val_model_idx'] = self.best_val_model_idx
+
         state['network'] = self.state_dict()  # save network parameter and other variables.
-        torch.save(state, f=os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx))))
+        torch.save(state, f=os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(
+            model_idx))))  # save state at prespecified filepath
 
     def load_model(self, model_save_dir, model_save_name, model_idx):
         """
@@ -145,10 +158,9 @@ class ExperimentBuilder(nn.Module):
         :param model_idx: The index to save the model with.
         :return: best val idx and best val model acc, also it loads the network state into the system state without returning it
         """
-        print("MODEL SAVE DIR: {}...".format(model_save_dir))
-        print("Model being loaded...{}".format(os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx)))))
         state = torch.load(f=os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx))))
         self.load_state_dict(state_dict=state['network'])
+        return state['best_val_model_idx'], state['best_val_model_criteria'], state
 
     @staticmethod
     def compute_f_metrics(stats, y_true, predicted, type_key):
@@ -188,8 +200,6 @@ class ExperimentBuilder(nn.Module):
         if criteria > self.best_val_model_criteria:  # if current epoch's mean val acc is greater than the saved best val acc then
             self.best_val_model_criteria = criteria  # set the best val model acc to be current epoch's val accuracy
             self.best_val_model_idx = epoch_idx  # set the experiment-wise best val idx to be the current epoch's idx
-            print("bpm network")
-            print(self.state['network'])
 
     @staticmethod
     def iter_logs(stats, start_time, index):
@@ -206,7 +216,7 @@ class ExperimentBuilder(nn.Module):
         :return: The summary current_epoch_losses from starting epoch to total_epochs.
         """
         train_stats = OrderedDict()
-        for i, epoch_idx in enumerate(range(self.starting_epoch, self.num_epochs)):
+        for epoch_idx in range(self.num_epochs):
             epoch_start_time = time.time()
             epoch_stats = defaultdict(list)
             with tqdm.tqdm(total=len(self.train_data)) as pbar_train:  # create a progress bar for training
@@ -223,6 +233,13 @@ class ExperimentBuilder(nn.Module):
                     pbar_val.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['valid_loss'][-1],
                                                                                      epoch_stats['valid_acc'][-1]))
 
+            #evaluate test here
+            with tqdm.tqdm(total=len(self.test_data)) as pbar_test:  # create a progress bar for validation
+                for x, y in self.test_data:  # get data batches
+                    self.run_evaluation_iter(x=x, y=y, stats=epoch_stats, experiment_key="test_experiment")  # run a validation iter
+                    pbar_test.update(1)  # add 1 step to the progress bar
+                    pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['test_experiment_loss'][-1],
+                                                                                     epoch_stats['test_experiment_acc'][-1]))
             # save to train stats
             for key, value in epoch_stats.items():
                 epoch_stats[key] = np.around(np.mean(value), round_param)
@@ -233,11 +250,6 @@ class ExperimentBuilder(nn.Module):
             train_stats["epoch_{}".format(epoch_idx)] = epoch_stats
 
             self.iter_logs(epoch_stats, epoch_start_time, epoch_idx)
-
-            # Save state each epoch
-            self.state['current_epoch_idx'] = epoch_idx
-            self.state['best_val_model_criteria'] = self.best_val_model_criteria
-            self.state['best_val_model_idx'] = self.best_val_model_idx
 
             self.save_model(model_save_dir=self.experiment_saved_models,
                             model_save_name="train_model",
@@ -256,17 +268,17 @@ class ExperimentBuilder(nn.Module):
                         model_idx=self.best_val_model_idx,
                         model_save_name="train_model")
 
-        print(self.state['network'])
-
-        test_stats_run = defaultdict(list)
+        test_stats = defaultdict(list)
         with tqdm.tqdm(total=len(self.test_data)) as pbar_test:  # ini a progress bar
             for x, y in self.test_data:  # sample batch
-                self.run_evaluation_iter(x=x, y=y, stats=test_stats_run, experiment_key='test')
+                self.run_evaluation_iter(x=x, y=y, stats=test_stats, experiment_key='test')
                 pbar_test.update(1)  # update progress bar status
-                pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(test_stats_run['test_loss'][-1],
-                                                                                  test_stats_run['test_acc'][-1]))
+                pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(test_stats['test_loss'][-1],
+                                                                                  test_stats['test_acc'][-1]))
+        # save to train stats
+        for key, value in test_stats.items():
+            test_stats[key] = np.around(np.mean(value), round_param)
 
-        test_stats = {key: np.around(np.mean(value), round_param) for key, value in test_stats_run.items()}
         test_stats['seed'] = self.seed
         test_stats['title'] = self.experiment_name
         merge_dict = dict(list(test_stats.items()) +
@@ -274,7 +286,6 @@ class ExperimentBuilder(nn.Module):
 
         merge_dict['epoch'] = self.best_val_model_idx
         print(merge_dict)
-
         prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv"),
                             output=[merge_dict])
         return train_stats, test_stats
