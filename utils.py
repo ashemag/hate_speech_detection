@@ -95,7 +95,7 @@ def extract_tweets(data, filename, subset=None):
     return tweets, labels
 
 
-def prepare_output_file(filename, output=None, file_action_key='a+'):
+def prepare_output_file(filename, output=None, file_action_key='a+', aggregate=False):
     """
 
     :param filename:
@@ -110,7 +110,37 @@ def prepare_output_file(filename, output=None, file_action_key='a+'):
         raise ValueError("Please specify output list to write to output file.")
     with open(filename, file_action_key) as csvfile:
         fieldnames = list(output[0].keys())
-        to_put_first = ['title', 'epoch']
+        if aggregate:
+            fieldnames = ['title', 'epoch','num_experiments',
+                          'test_experiment_acc',
+                          'test_experiment_loss', 'test_experiment_f_score', 'test_experiment_f_score_hateful',
+                          'test_experiment_precision_hateful', 'test_experiment_recall_hateful',
+                          'test_experiment_f_score_abusive',
+                          'test_experiment_precision_abusive', 'test_experiment_recall_abusive',
+                          'test_experiment_f_score_normal',
+                          'test_experiment_precision_normal', 'test_experiment_recall_normal',
+                          'test_experiment_f_score_spam',
+                          'test_experiment_precision_spam', 'test_experiment_recall_spam',
+                          'train_acc',
+                          'train_loss', 'train_f_score', 'train_f_score_hateful', 'train_precision_hateful',
+                          'train_recall_hateful',
+                          'train_f_score_abusive', 'train_precision_abusive', 'train_recall_abusive',
+                          'train_f_score_normal',
+                          'train_precision_normal', 'train_recall_normal', 'train_f_score_spam', 'train_precision_spam',
+                          'train_recall_spam', 'valid_acc', 'valid_loss', 'valid_f_score', 'valid_f_score_hateful',
+                          'valid_precision_hateful', 'valid_recall_hateful', 'valid_f_score_abusive',
+                          'valid_precision_abusive',
+                          'valid_recall_abusive', 'valid_f_score_normal', 'valid_precision_normal',
+                          'valid_recall_normal',
+                          'valid_f_score_spam', 'valid_precision_spam', 'valid_recall_spam',
+                          'test_acc', 'test_loss', 'test_f_score', 'test_f_score_hateful',
+                          'test_precision_hateful', 'test_recall_hateful', 'test_f_score_abusive',
+                          'test_precision_abusive',
+                          'test_recall_abusive', 'test_f_score_normal', 'test_precision_normal', 'test_recall_normal',
+                          'test_f_score_spam', 'test_precision_spam', 'test_recall_spam'
+                          ]
+
+        to_put_first = ['epoch', 'title']
         for item in to_put_first:
             if item in fieldnames:
                 fieldnames.remove(item)

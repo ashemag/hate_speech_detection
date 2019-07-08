@@ -295,6 +295,8 @@ class ExperimentBuilder(nn.Module):
 
         test_stats['seed'] = self.seed
         test_stats['title'] = self.experiment_name
+
+
         merge_dict = dict(list(test_stats.items()) +
                           list(train_stats["epoch_{}".format(self.best_val_model_idx)].items()))
 
