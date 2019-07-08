@@ -113,22 +113,23 @@ class ExperimentBuilder(nn.Module):
         :param y: The targets for the model. A numpy array of shape batch_size, num_classes
         :return: the loss and accuracy for this batch
         """
-        self.eval()  # sets the system to validation mode
-        if type(x) is np.ndarray:
-            x, y = torch.Tensor(x).float().to(device=self.device), torch.Tensor(y).long().to(
-                device=self.device)  # convert data to pytorch tensors and send to the computation device
+        with torch.no_grad():
+            self.eval()  # sets the system to validation mode
+            if type(x) is np.ndarray:
+                x, y = torch.Tensor(x).float().to(device=self.device), torch.Tensor(y).long().to(
+                    device=self.device)  # convert data to pytorch tensors and send to the computation device
 
-        x = x.to(self.device)
-        x = x.float()
-        y = y.to(self.device)
-        out = self.model.forward(x)  # forward the data in the model
-        loss = self.criterion(out, y)
-        # loss = F.cross_entropy(out, y)  # compute loss
-        _, predicted = torch.max(out.data, 1)  # get argmax of predictions
-        accuracy = np.mean(list(predicted.eq(y.data).cpu()))
-        stats['{}_acc'.format(experiment_key)].append(accuracy)  # compute accuracy
-        stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
-        self.compute_f_metrics(stats, y, predicted, experiment_key)
+            x = x.to(self.device)
+            x = x.float()
+            y = y.to(self.device)
+            out = self.model.forward(x)  # forward the data in the model
+            loss = self.criterion(out, y)
+            # loss = F.cross_entropy(out, y)  # compute loss
+            _, predicted = torch.max(out.data, 1)  # get argmax of predictions
+            accuracy = np.mean(list(predicted.eq(y.data).cpu()))
+            stats['{}_acc'.format(experiment_key)].append(accuracy)  # compute accuracy
+            stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
+            self.compute_f_metrics(stats, y, predicted, experiment_key)
 
     def save_model(self, model_save_dir, model_save_name, model_idx, state):
         """
@@ -145,10 +146,8 @@ class ExperimentBuilder(nn.Module):
         self.state['current_epoch_idx'] = model_idx
         self.state['best_val_model_criteria'] = self.best_val_model_criteria
         self.state['best_val_model_idx'] = self.best_val_model_idx
-
-        state['network'] = self.state_dict()  # save network parameter and other variables.
-        torch.save(state, f=os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(
-            model_idx))))  # save state at prespecified filepath
+        path = os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx)))
+        torch.save(self.model.state_dict(), f=path)
 
     def load_model(self, model_save_dir, model_save_name, model_idx):
         """
@@ -156,11 +155,11 @@ class ExperimentBuilder(nn.Module):
         :param model_save_dir: The directory to store the state at.
         :param model_save_name: Name to use to save model without the epoch index
         :param model_idx: The index to save the model with.
-        :return: best val idx and best val model acc, also it loads the network state into the system state without returning it
         """
-        state = torch.load(f=os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx))))
-        self.load_state_dict(state_dict=state['network'])
-        return state['best_val_model_idx'], state['best_val_model_criteria'], state
+        path = os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx)))
+        state = torch.load(f=path)
+        self.model.load_state_dict(state)
+        self.model.to(self.device) #  probably redundant
 
     @staticmethod
     def compute_f_metrics(stats, y_true, predicted, type_key):
@@ -239,7 +238,8 @@ class ExperimentBuilder(nn.Module):
                     self.run_evaluation_iter(x=x, y=y, stats=epoch_stats, experiment_key="test_experiment")  # run a validation iter
                     pbar_test.update(1)  # add 1 step to the progress bar
                     pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(epoch_stats['test_experiment_loss'][-1],
-                                                                                     epoch_stats['test_experiment_acc'][-1]))
+                                                                          epoch_stats['test_experiment_acc'][-1]))
+
             # save to train stats
             for key, value in epoch_stats.items():
                 epoch_stats[key] = np.around(np.mean(value), round_param)
@@ -255,6 +255,7 @@ class ExperimentBuilder(nn.Module):
                             model_save_name="train_model",
                             model_idx=epoch_idx,
                             state=self.state)
+            print(self.model.weights)
             self.save_best_performing_model(epoch_stats=epoch_stats, epoch_idx=epoch_idx)
 
         ### EXPERIMENTS END ###

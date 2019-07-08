@@ -1,20 +1,18 @@
 """
 Runs baseline experiments
 """
-from comet_ml import Experiment
+from comet_ml import Experiment # necessary for comet to function
 import argparse
 import configparser
 from torch import optim
-
 from experiment_builder import ExperimentBuilder
-from globals import ROOT_DIR
 from data_providers import *
 import os
-
-from models.fc_linear_tdidf import fc_linear_tdidf
 from models.cnn import *
+from models.multilayer_perceptron import multi_layer_perceptron
 
 # PARAMS
+
 VERBOSE = True
 
 config = configparser.ConfigParser()
@@ -31,7 +29,7 @@ def get_args():
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--model', type=str, default='CNN')
     parser.add_argument('--name', type=str, default='CNN_Experiment')
-    parser.add_argument('--embedding', type=str, default='NA')
+    parser.add_argument('--embedding_key', type=str, default='NA')
     parser.add_argument('--embedding_level', type=str, default='NA')
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--dropout', type=float, default=.5)
@@ -42,15 +40,16 @@ def get_args():
     return parser.parse_args()
 
 
-def extract_data(embedding_key, embedding_level_key, seed):
+def extract_data(embedding_key, embedding_level, seed):
     path_data = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_DATA'])
     path_labels = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_LABELS'])
     data_provider = TextDataProvider(path_data, path_labels)
-    if embedding_level_key == 'word':
+
+    if embedding_level == 'word':
         output = data_provider.generate_word_level_embeddings(embedding_key, seed)
-    elif embedding_level_key == 'char':
+    elif embedding_level == 'char':
         output = data_provider.generate_char_level_embeddings(seed)
-    else:
+    elif embedding_level == 'tdidf':
         output = data_provider.generate_tdidf_embeddings(seed)
 
     if VERBOSE:
@@ -82,19 +81,20 @@ def wrap_data(batch_size, seed, x_train, y_train, x_valid, y_valid, x_test, y_te
     return train_data_local, valid_data_local, test_data_local
 
 
-def fetch_model(embedding_level, input_shape_local, dropout):
+def fetch_model(model, embedding_level, input_shape_local, dropout):
+    if model == 'MLP':
+        return multi_layer_perceptron(input_shape_local)
     if embedding_level == 'word':
         return word_cnn(input_shape_local, dropout)
     elif embedding_level == 'character':
         return character_cnn(input_shape_local)
-    elif embedding_level == 'tdidf':
-        return fc_linear_tdidf(input_shape_local)
     else:
         raise ValueError("Model key not found {}".format(embedding_level))
 
 
 def fetch_model_parameters(args_local, input_shape_local):
-    model_local, criterion_local, optimizer_local = fetch_model(embedding_level=args_local.embedding_level,
+    model_local, criterion_local, optimizer_local = fetch_model(model=args_local.model,
+                                                                embedding_level=args_local.embedding_level,
                                                                 input_shape_local=input_shape_local,
                                                                 dropout=args_local.dropout)
 
@@ -121,13 +121,13 @@ def generate_device(seed):
 if __name__ == "__main__":
     args = get_args()
     device = generate_device(args.seed)
-    data = extract_data(args.embedding, args.embedding_level, args.seed)
+    data = extract_data(args.embedding_key, args.embedding_level, args.seed)
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
     input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
     model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
 
     # OUTPUT
-    folder_title = '_'.join([args.model, args.name, args.embedding, args.embedding_level])
+    folder_title = '_'.join([args.model, args.name, args.embedding_key, args.embedding_level])
     print("=== Writing to folder {} ===".format(folder_title))
     results_dir = os.path.join(ROOT_DIR, 'results/{}').format(folder_title)
     start = time.time()

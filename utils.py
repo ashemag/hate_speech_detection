@@ -3,39 +3,11 @@ Helpers for tweet extraction/processing
 """
 import csv
 import json
-from collections import Counter
 import os
 from sklearn.model_selection import train_test_split
-import numpy as np
 from preprocessor import Preprocessor
 import numpy as np
 
-
-# def split_data(x, y, seed, verbose=True):
-#     rng = np.random.RandomState(seed=seed)
-#     num_samples = len(x)
-#     train_size = int(num_samples * .64)
-#     valid_size = int(num_samples * .16)
-#
-#     train_sample_idx = rng.choice(a=[i for i in range(num_samples)], size=train_size, replace=False)
-#     remaining = [i for i in range(num_samples) if i not in train_sample_idx]
-#     valid_sample_idx = rng.choice(a=[i for i in remaining], size=valid_size, replace=False)
-#     test_sample_idx = [i for i in remaining if i not in valid_sample_idx]
-#
-#     x,y = np.array(x), np.array(y)
-#
-#     x_train, y_train = x[train_sample_idx], y[train_sample_idx]
-#     x_valid, y_valid = x[valid_sample_idx], y[valid_sample_idx]
-#     x_test, y_test = x[test_sample_idx], y[test_sample_idx]
-#
-#     total = len(x_train) + len(x_valid) + len(x_test)
-#     if verbose:
-#         print("[Sizes] Training set: {:.2f}%, Validation set: {:.2f}%, Test set: {:.2f}%".format(
-#             len(x_train) / float(total) * 100,
-#             len(x_valid) / float(total) * 100,
-#             len(x_test) / float(total) * 100))
-#
-#     return x_train, y_train, x_valid, y_valid, x_test, y_test
 
 def split_data(x, y, seed, verbose=True):
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.20, random_state=seed)
@@ -92,9 +64,6 @@ def extract_tweets(data, filename, subset=None):
                 break
             obj = json.loads(line)
 
-            # for key in obj.keys():
-            #     print('{} {}'.format(key, obj[key]))
-            # exit()
             geo.append(1 if obj['geo'] is not None else 0)
             locations.append(obj['user']['location'])
             text_raw = obj['text']
@@ -116,18 +85,7 @@ def extract_tweets(data, filename, subset=None):
             word_length += [len(word) for word in words]
             tweet_length.append(len(words))
             line_count += 1
-    cnt = dict(Counter(word_length))
 
-    # for key in sorted(cnt.keys()):
-    #     print("word length: {} frequency: {}".format(key, cnt[key]))
-   # print("Locations: {}".format(Counter(locations).most_common(10)))
-   # print("Geos: {}".format(Counter(geo)))
-   #  print(labels)
-    # label_mapping = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
-
-    # for i in range(4):
-    #     print("{} {:0.2f}".format(label_mapping[i], labels.count(i)/(len(labels))))
-    # exit()
     print("[Stats] Removed {}/{} labels".format(error_count, line_count))
     print("[Stats] Average tweet length is {} words".format(int(np.mean(tweet_length))))
     print("[Stats] Average tweet length is {} characters".format(int(np.mean(tweet_char_length))))
@@ -151,7 +109,12 @@ def prepare_output_file(filename, output=None, file_action_key='a+'):
     if output is None or output == []:
         raise ValueError("Please specify output list to write to output file.")
     with open(filename, file_action_key) as csvfile:
-        fieldnames = output[0].keys()
+        fieldnames = list(output[0].keys())
+        to_put_first = ['title', 'epoch']
+        for item in to_put_first:
+            if item in fieldnames:
+                fieldnames.remove(item)
+                fieldnames.insert(0, item)
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
         if not file_exists or file_action_key == 'w' or os.path.getsize(filename) == 0:

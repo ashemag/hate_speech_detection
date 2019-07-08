@@ -125,10 +125,17 @@ class TextDataProvider(object):
             embed_dim = TWITTER_EMBED_DIM
             filename = os.path.join(ROOT_DIR, 'data/word2vec_twitter_model/word2vec_twitter_model.bin')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
-        elif key == 'fasttext':
+        elif 'fasttext' in key:
             print("[Model] Using {} embeddings".format(key))
             embed_dim = FASTTEXT_EMBED_DIM
-            filename = os.path.join(ROOT_DIR, 'data/wiki-news-300d-1M-subword.vec')
+            if key == 'fasttext-wiki':
+                filename = os.path.join(ROOT_DIR, 'data/fasttext/wiki-news-300d-1M.vec')
+            elif key == 'fasttext-wiki-subword':
+                filename = os.path.join(ROOT_DIR, 'data/fasttext/wiki-news-300d-1M-subword.vec')
+            elif key == 'fasttext-crawl':
+                filename = os.path.join(ROOT_DIR, 'data/fasttext/crawl-300d-2M.vec')
+            elif key == 'fasttext-crawl-subword':
+                filename = os.path.join(ROOT_DIR, 'data/fasttext/crawl-300d-2M-subword.vec')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
         else:
             print("[Model] Using {} embeddings".format(key))
