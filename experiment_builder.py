@@ -29,6 +29,7 @@ class ExperimentBuilder(nn.Module):
         self.model.reset_parameters()
         self.device = device
         self.seed = hyper_params['seed']
+
         if torch.cuda.device_count() > 1:
             self.model.to(self.device)
             self.model = nn.DataParallel(module=self.model)
@@ -85,7 +86,7 @@ class ExperimentBuilder(nn.Module):
         """
         # sets model to training mode
         # (in case batch normalization or other methods have different procedures for training and evaluation)
-        self.train()
+        self.model.train()
         if type(x) is np.ndarray:
             x, y = torch.Tensor(x).float().to(device=self.device), torch.Tensor(y).long().to(
                 device=self.device)  # convert data to pytorch tensors and send to the computation device
@@ -114,7 +115,7 @@ class ExperimentBuilder(nn.Module):
         :return: the loss and accuracy for this batch
         """
         with torch.no_grad():
-            self.eval()  # sets the system to validation mode
+            self.model.eval()  # sets the system to validation mode
             if type(x) is np.ndarray:
                 x, y = torch.Tensor(x).float().to(device=self.device), torch.Tensor(y).long().to(
                     device=self.device)  # convert data to pytorch tensors and send to the computation device
@@ -124,6 +125,7 @@ class ExperimentBuilder(nn.Module):
             y = y.to(self.device)
             out = self.model.forward(x)  # forward the data in the model
             loss = self.criterion(out, y)
+
             # loss = F.cross_entropy(out, y)  # compute loss
             _, predicted = torch.max(out.data, 1)  # get argmax of predictions
             accuracy = np.mean(list(predicted.eq(y.data).cpu()))
@@ -131,7 +133,7 @@ class ExperimentBuilder(nn.Module):
             stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
             self.compute_f_metrics(stats, y, predicted, experiment_key)
 
-    def save_model(self, model_save_dir, model_save_name, model_idx, state):
+    def save_model(self, model_save_dir, model_save_name, model_idx):
         """
         Save the network parameter state and current best val epoch idx and best val accuracy.
         :param model_save_name: Name to use to save model without the epoch index
@@ -143,11 +145,11 @@ class ExperimentBuilder(nn.Module):
 
         """
         # Save state each epoch
-        self.state['current_epoch_idx'] = model_idx
-        self.state['best_val_model_criteria'] = self.best_val_model_criteria
-        self.state['best_val_model_idx'] = self.best_val_model_idx
-        path = os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx)))
-        torch.save(self.model.state_dict(), f=path)
+        path = os.path.join(model_save_dir, "{}_{}.pth".format(model_save_name, str(model_idx)))
+        checkpoint = {'model': self.model,
+                      'state_dict': self.model.state_dict(),
+                      'optimizer': self.optimizer.state_dict()}
+        torch.save(checkpoint, f=path)
 
     def load_model(self, model_save_dir, model_save_name, model_idx):
         """
@@ -156,10 +158,17 @@ class ExperimentBuilder(nn.Module):
         :param model_save_name: Name to use to save model without the epoch index
         :param model_idx: The index to save the model with.
         """
-        path = os.path.join(model_save_dir, "{}_{}".format(model_save_name, str(model_idx)))
-        state = torch.load(f=path)
-        self.model.load_state_dict(state)
-        self.model.to(self.device) #  probably redundant
+        path = os.path.join(model_save_dir, "{}_{}.pth".format(model_save_name, str(model_idx)))
+        checkpoint = torch.load(f=path)
+        self.model = checkpoint['model']
+        self.optimizer = checkpoint['optimizer']
+
+        # freeze parameters
+        self.model.load_state_dict(checkpoint['state_dict'])
+        for parameter in self.model.parameters():
+            parameter.requires_grad = False
+
+        self.model.to(self.device)  # probably redundant
 
     @staticmethod
     def compute_f_metrics(stats, y_true, predicted, type_key):
@@ -215,6 +224,7 @@ class ExperimentBuilder(nn.Module):
         :return: The summary current_epoch_losses from starting epoch to total_epochs.
         """
         train_stats = OrderedDict()
+        model_weights = {}
         for epoch_idx in range(self.num_epochs):
             epoch_start_time = time.time()
             epoch_stats = defaultdict(list)
@@ -242,7 +252,7 @@ class ExperimentBuilder(nn.Module):
 
             # save to train stats
             for key, value in epoch_stats.items():
-                epoch_stats[key] = np.around(np.mean(value), round_param)
+                epoch_stats[key] = np.mean(value)
                 if not DEBUG:
                     self.experiment.log_metric(name=key, value=epoch_stats[key], step=epoch_idx)
 
@@ -251,11 +261,10 @@ class ExperimentBuilder(nn.Module):
 
             self.iter_logs(epoch_stats, epoch_start_time, epoch_idx)
 
+            model_weights[epoch_idx] = list(self.model.parameters())
             self.save_model(model_save_dir=self.experiment_saved_models,
                             model_save_name="train_model",
-                            model_idx=epoch_idx,
-                            state=self.state)
-            print(self.model.weights)
+                            model_idx=epoch_idx)
             self.save_best_performing_model(epoch_stats=epoch_stats, epoch_idx=epoch_idx)
 
         ### EXPERIMENTS END ###
@@ -269,6 +278,10 @@ class ExperimentBuilder(nn.Module):
                         model_idx=self.best_val_model_idx,
                         model_save_name="train_model")
 
+        final_model_params = list(self.model.parameters())
+        print("===Are model params the same?===")
+        print(torch.equal(final_model_params[0], model_weights[self.best_val_model_idx][0]))
+        print("====")
         test_stats = defaultdict(list)
         with tqdm.tqdm(total=len(self.test_data)) as pbar_test:  # ini a progress bar
             for x, y in self.test_data:  # sample batch
@@ -278,7 +291,7 @@ class ExperimentBuilder(nn.Module):
                                                                                   test_stats['test_acc'][-1]))
         # save to train stats
         for key, value in test_stats.items():
-            test_stats[key] = np.around(np.mean(value), round_param)
+            test_stats[key] = np.mean(value)
 
         test_stats['seed'] = self.seed
         test_stats['title'] = self.experiment_name
@@ -286,7 +299,14 @@ class ExperimentBuilder(nn.Module):
                           list(train_stats["epoch_{}".format(self.best_val_model_idx)].items()))
 
         merge_dict['epoch'] = self.best_val_model_idx
+        print("=== Compare f score hateful ===")
+        print("{}\n{}".format(merge_dict['test_f_score_hateful'], merge_dict['test_experiment_f_score_hateful']))
+        print("===")
         print(merge_dict)
+
+        for key, value in merge_dict.items():
+            if isinstance(value, float):
+                merge_dict[key] = np.around(value, 4)
         prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv"),
                             output=[merge_dict])
         return train_stats, test_stats

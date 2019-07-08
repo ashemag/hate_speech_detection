@@ -125,7 +125,6 @@ if __name__ == "__main__":
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
     input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
     model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
-
     # OUTPUT
     folder_title = '_'.join([args.model, args.name, args.embedding_key, args.embedding_level])
     print("=== Writing to folder {} ===".format(folder_title))

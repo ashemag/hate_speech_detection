@@ -70,3 +70,4 @@ scripts*
 .DS_Store
 *config*
 *checkpoints*
+*baseline_experiments/testing*
