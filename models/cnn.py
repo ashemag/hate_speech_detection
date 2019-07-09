@@ -44,11 +44,7 @@ class CNN(nn.Module):
         out = out.permute([0, 2, 1])
         print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
 
-        context_list = []
         for i in range(self.num_layers):  # for number of layers times
-            if i > 0:
-                # to give every layer access to all prev layers (DenseNet connectivity)
-                out = torch.cat(context_list, dim=1)
             dilation = int(DILATION_PARAM**i)
             # dilation = 1
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
@@ -60,13 +56,11 @@ class CNN(nn.Module):
                                                              dilation=dilation)
 
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
-            self.layer_dict['batch_norm_{}'.format(i)] = nn.BatchNorm1d(num_features=out.shape[1])
-            out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            # self.layer_dict['batch_norm_{}'.format(i)] = nn.BatchNorm1d(num_features=out.shape[1])
+            # out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)
-            out = self.drop(out)
-            context_list.append(out)
+            # out = self.drop(out)
 
-        out = torch.cat(context_list, dim=1)
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
 
@@ -86,18 +80,12 @@ class CNN(nn.Module):
         """
         out = x
         out = out.permute([0, 2, 1])
-        context_list = []
         for i in range(self.num_layers):  # for number of layers times
-            if i > 0:
-                out = torch.cat(context_list, dim=1)
-
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
-            out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            # out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)
-            out = self.drop(out)
-            context_list.append(out)
+            # out = self.drop(out)
 
-        out = torch.cat(context_list, dim=1)
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds

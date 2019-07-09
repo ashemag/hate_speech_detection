@@ -8,6 +8,8 @@ import os
 import numpy as np
 import time
 from sklearn.metrics import f1_score, precision_score, recall_score
+
+from models.cnn import word_cnn
 from utils import prepare_output_file
 from globals import ROOT_DIR
 
@@ -57,7 +59,7 @@ class ExperimentBuilder(nn.Module):
             os.mkdir(self.experiment_saved_models)  # create the experiment saved models directory
 
         self.num_epochs = hyper_params['num_epochs']
-        self.criterion = nn.CrossEntropyLoss().to(self.device)  # send the loss computation to the GPU
+        self.criterion = nn.CrossEntropyLoss()  # send the loss computation to the GPU
         self.starting_epoch = 0
         self.state = dict()
 
@@ -86,13 +88,9 @@ class ExperimentBuilder(nn.Module):
         """
         # sets model to training mode
         # (in case batch normalization or other methods have different procedures for training and evaluation)
-        self.model.train()
-        if type(x) is np.ndarray:
-            x, y = torch.Tensor(x).float().to(device=self.device), torch.Tensor(y).long().to(
-                device=self.device)  # convert data to pytorch tensors and send to the computation device
-
-        x = x.to(self.device)
+        self.train()
         x = x.float()
+        x = x.to(self.device)
         y = y.to(self.device)
         self.optimizer.zero_grad()  # set all weight grads from previous training iters to 0
         out = self.model.forward(x)  # forward the data in the model
@@ -115,13 +113,9 @@ class ExperimentBuilder(nn.Module):
         :return: the loss and accuracy for this batch
         """
         with torch.no_grad():
-            self.model.eval()  # sets the system to validation mode
-            if type(x) is np.ndarray:
-                x, y = torch.Tensor(x).float().to(device=self.device), torch.Tensor(y).long().to(
-                    device=self.device)  # convert data to pytorch tensors and send to the computation device
-
-            x = x.to(self.device)
+            self.eval()  # sets the system to validation mode
             x = x.float()
+            x = x.to(self.device)
             y = y.to(self.device)
             out = self.model.forward(x)  # forward the data in the model
             loss = self.criterion(out, y)
@@ -129,6 +123,7 @@ class ExperimentBuilder(nn.Module):
             # loss = F.cross_entropy(out, y)  # compute loss
             _, predicted = torch.max(out.data, 1)  # get argmax of predictions
             accuracy = np.mean(list(predicted.eq(y.data).cpu()))
+
             stats['{}_acc'.format(experiment_key)].append(accuracy)  # compute accuracy
             stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
             self.compute_f_metrics(stats, y, predicted, experiment_key)
@@ -145,10 +140,10 @@ class ExperimentBuilder(nn.Module):
 
         """
         # Save state each epoch
-        path = os.path.join(model_save_dir, "{}_{}.pth".format(model_save_name, str(model_idx)))
+        path = os.path.join(model_save_dir, "{}_{}.pt".format(model_save_name, str(model_idx)))
         checkpoint = {'model': self.model,
-                      'state_dict': self.model.state_dict(),
-                      'optimizer': self.optimizer.state_dict()}
+                      'state_dict': self.state_dict(),
+                      }
         torch.save(checkpoint, f=path)
 
     def load_model(self, model_save_dir, model_save_name, model_idx):
@@ -158,17 +153,9 @@ class ExperimentBuilder(nn.Module):
         :param model_save_name: Name to use to save model without the epoch index
         :param model_idx: The index to save the model with.
         """
-        path = os.path.join(model_save_dir, "{}_{}.pth".format(model_save_name, str(model_idx)))
+        path = os.path.join(model_save_dir, "{}_{}.pt".format(model_save_name, str(model_idx)))
         checkpoint = torch.load(f=path)
-        self.model = checkpoint['model']
-        self.optimizer = checkpoint['optimizer']
-
-        # freeze parameters
-        self.model.load_state_dict(checkpoint['state_dict'])
-        for parameter in self.model.parameters():
-            parameter.requires_grad = False
-
-        self.model.to(self.device)  # probably redundant
+        self.load_state_dict(checkpoint['state_dict'])
 
     @staticmethod
     def compute_f_metrics(stats, y_true, predicted, type_key):
@@ -279,10 +266,11 @@ class ExperimentBuilder(nn.Module):
                         model_save_name="train_model")
 
         final_model_params = list(self.model.parameters())
-        print("===Are model params the same?===")
-        print(torch.equal(final_model_params[0], model_weights[self.best_val_model_idx][0]))
-        print("====")
+        # print("===Are model params the same?===")
+        # print(torch.equal(final_model_params[0].cpu(), model_weights[self.best_val_model_idx][0]))
+        # print("====")
         test_stats = defaultdict(list)
+        # bug
         with tqdm.tqdm(total=len(self.test_data)) as pbar_test:  # ini a progress bar
             for x, y in self.test_data:  # sample batch
                 self.run_evaluation_iter(x=x, y=y, stats=test_stats, experiment_key='test')

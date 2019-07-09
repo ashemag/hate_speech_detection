@@ -9,6 +9,7 @@ from experiment_builder import ExperimentBuilder
 from data_providers import *
 import os
 from models.cnn import *
+from models.densenet import densenet
 from models.multilayer_perceptron import multi_layer_perceptron
 
 # PARAMS
@@ -31,7 +32,7 @@ def get_args():
     parser.add_argument('--name', type=str, default='CNN_Experiment')
     parser.add_argument('--embedding_key', type=str, default='NA')
     parser.add_argument('--embedding_level', type=str, default='NA')
-    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--batch_size', type=int, default=2048)
     parser.add_argument('--dropout', type=float, default=.5)
 
     if VERBOSE:
@@ -81,19 +82,22 @@ def wrap_data(batch_size, seed, x_train, y_train, x_valid, y_valid, x_test, y_te
     return train_data_local, valid_data_local, test_data_local
 
 
-def fetch_model(model, embedding_level, input_shape_local, dropout):
-    if model == 'MLP':
+def fetch_model(model_local, embedding_level, input_shape_local, dropout):
+    if model_local == 'MLP':
         return multi_layer_perceptron(input_shape_local)
-    if embedding_level == 'word':
-        return word_cnn(input_shape_local, dropout)
-    elif embedding_level == 'character':
-        return character_cnn(input_shape_local)
+    if model_local == 'CNN':
+        if embedding_level == 'word':
+            return word_cnn(input_shape_local, dropout)
+        elif embedding_level == 'character':
+            return character_cnn(input_shape_local)
+    if model_local == 'DENSENET':
+        return densenet(input_shape_local)
     else:
         raise ValueError("Model key not found {}".format(embedding_level))
 
 
 def fetch_model_parameters(args_local, input_shape_local):
-    model_local, criterion_local, optimizer_local = fetch_model(model=args_local.model,
+    model_local, criterion_local, optimizer_local = fetch_model(model_local=args_local.model,
                                                                 embedding_level=args_local.embedding_level,
                                                                 input_shape_local=input_shape_local,
                                                                 dropout=args_local.dropout)
