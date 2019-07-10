@@ -158,7 +158,7 @@ if __name__ == "__main__":
         train_data=train_data,
         valid_data=valid_data,
         test_data=test_data,
-        scheduler=scheduler
+        scheduler=scheduler,
     )
 
     experiment_metrics, test_metrics = experiment.run_experiment()  # run experiment and return experiment metrics

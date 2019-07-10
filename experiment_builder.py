@@ -2,19 +2,15 @@ from comet_ml import OfflineExperiment
 from collections import defaultdict, OrderedDict
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import tqdm
 import os
 import numpy as np
 import time
 from sklearn.metrics import f1_score, precision_score, recall_score
-
-from models.cnn import word_cnn
 from utils import prepare_output_file
-from globals import ROOT_DIR
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
-DEBUG = True
+DEBUG = False
 
 
 class ExperimentBuilder(nn.Module):
@@ -271,7 +267,6 @@ class ExperimentBuilder(nn.Module):
 
             epoch_stats['epoch'] = epoch_idx
             train_stats["epoch_{}".format(epoch_idx)] = epoch_stats
-
             if DEBUG:
                 self.iter_logs(epoch_stats, epoch_start_time, epoch_idx)
 

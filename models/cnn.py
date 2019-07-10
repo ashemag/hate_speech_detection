@@ -33,13 +33,20 @@ class CNN(nn.Module):
         # build the network
         self.build_module()
 
+    @staticmethod
+    def process(out):
+        if len(out.shape) > 2:
+            out = out.permute([0, 2, 1])
+        else:
+            out = out.reshape(out.shape[0], out.shape[1], 1)
+        return out
+
     def build_module(self):
         """
         Builds network whilst automatically inferring shapes of layers.
         """
         x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
-        out = x
-        out = out.permute([0, 2, 1])
+        out = self.process(x)
         print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
 
         for i in range(self.num_layers):  # for number of layers times
@@ -75,8 +82,7 @@ class CNN(nn.Module):
         :param x: Inputs x (b, c, h, w)
         :return: preds (b, num_classes)
         """
-        out = x
-        out = out.permute([0, 2, 1])
+        out = self.process(x)
         for i in range(self.num_layers):  # for number of layers times
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
             out = self.layer_dict['batch_norm_{}'.format(i)](out)

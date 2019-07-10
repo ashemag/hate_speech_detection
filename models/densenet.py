@@ -30,7 +30,7 @@ class Transition(nn.Module):
 
     def forward(self, x):
         out = self.conv(F.relu(self.bn(x)))
-        out = F.avg_pool1d(out, 2)
+        out = F.avg_pool1d(out, out.shape[-1])
         return out
 
 
@@ -38,8 +38,7 @@ class DenseNet(Network):
     def __init__(self, input_shape, block, nblocks, growth_rate=12, reduction=0.5, num_classes=4):
         super(DenseNet, self).__init__()
         x = torch.zeros(input_shape)
-        out = x
-        out = out.permute([0, 2, 1])
+        out = self.process(x)
         self.growth_rate = growth_rate
 
         num_planes = 2*growth_rate
@@ -76,9 +75,16 @@ class DenseNet(Network):
             in_planes += self.growth_rate
         return nn.Sequential(*layers)
 
+    @staticmethod
+    def process(out):
+        if len(out.shape) > 2:
+            out = out.permute([0, 2, 1])
+        else:
+            out = out.reshape(out.shape[0], out.shape[1], 1)
+        return out
+
     def forward(self, x):
-        out = x
-        out = out.permute([0, 2, 1])
+        out = self.process(x)
         out = self.conv1(out)
         out = self.trans1(self.dense1(out))
         out = self.trans2(self.dense2(out))
@@ -106,7 +112,4 @@ def DenseNet161():
 
 
 def densenet(input_shape):
-    model = DenseNet(input_shape, Bottleneck, [6,12,24,16], growth_rate=12)
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4)
-    return model, criterion, optimizer
+    return DenseNet(input_shape, Bottleneck, [6,12,24,16], growth_rate=12)

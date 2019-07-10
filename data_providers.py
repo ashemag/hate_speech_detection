@@ -236,20 +236,12 @@ class TextDataProvider(object):
 
         vectorizer = TfidfVectorizer(use_idf=True, max_features=10000, stop_words='english')
 
-        output = {'x_train': vectorizer.fit_transform(x_train).todense(),
-                  'y_train': y_train,
-                  'x_valid': vectorizer.transform(x_val).todense(),
-                  'y_valid': y_val,
-                  'x_test': vectorizer.transform(x_test).todense(),
-                  'y_test': y_test}
-
-        total = len(output['x_train']) + len(output['x_valid']) + len(output['x_test'])
-        if verbose:
-            print("[Sizes] Training set: {:.2f}%, Validation set: {:.2f}%, Test set: {:.2f}%".format(
-                len(output['x_train']) / float(total) * 100,
-                len(output['x_valid']) / float(total) * 100,
-                len(output['x_test']) / float(total) * 100))
-        return output
+        return {'x_train': vectorizer.fit_transform(x_train).todense(),
+                'y_train': y_train,
+                'x_valid': vectorizer.transform(x_val).todense(),
+                'y_valid': y_val,
+                'x_test': vectorizer.transform(x_test).todense(),
+                'y_test': y_test}
 
     def _generate_embedding_output(self, processed_tweets, seed):
         x_train, y_train, x_val, y_val, x_test, y_test = split_data(processed_tweets, self.labels, seed)
