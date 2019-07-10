@@ -14,7 +14,7 @@ from utils import prepare_output_file
 from globals import ROOT_DIR
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
-DEBUG = False
+DEBUG = True
 
 
 class ExperimentBuilder(nn.Module):
@@ -60,7 +60,7 @@ class ExperimentBuilder(nn.Module):
             os.mkdir(self.experiment_saved_models)  # create the experiment saved models directory
 
         self.num_epochs = hyper_params['num_epochs']
-        self.criterion = nn.CrossEntropyLoss()  # send the loss computation to the GPU
+        self.criterion = nn.CrossEntropyLoss().to(self.device)  # send the loss computation to the GPU
         self.starting_epoch = 0
         self.state = dict()
 
@@ -298,21 +298,23 @@ class ExperimentBuilder(nn.Module):
                 pbar_test.update(1)  # update progress bar status
                 pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(test_stats['test_loss'][-1],
                                                                                   test_stats['test_acc'][-1]))
-        # save to train stats
+        # save to test stats
         for key, value in test_stats.items():
             test_stats[key] = np.mean(value)
 
-        merge_dict = OrderedDict(list(test_stats.items()) +
+        merge_dict = dict(list(test_stats.items()) +
                           list(train_stats["epoch_{}".format(self.best_val_model_idx)].items()))
 
         merge_dict['epoch'] = self.best_val_model_idx
         merge_dict['seed'] = self.seed
         merge_dict['title'] = self.experiment_name
+        merge_dict['num_epochs'] = self.num_epochs
 
         for key, value in merge_dict.items():
             if isinstance(value, float):
                 merge_dict[key] = np.around(value, 4)
 
+        print(merge_dict)
         prepare_output_file(filename="{}/{}".format(self.experiment_folder, "results.csv"),
                             output=[merge_dict])
 

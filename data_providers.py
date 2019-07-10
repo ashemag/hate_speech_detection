@@ -263,14 +263,14 @@ class TextDataProvider(object):
 
     def generate_word_level_embeddings(self, embedding_key, seed):
         # if saved:
-        #     return np.load(os.path.abspath(os.path.join(ROOT_DIR, 'data/input.npy')))
+        #     return np.load(os.path.abspath(os.path.join(ROOT_DIR, 'data/output.npy')))
         # else:
         raw_tweets = self.tokenize(self.raw_tweets)
         x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, self.labels, seed)
         word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
         processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
         output = self._generate_embedding_output(processed_tweets, seed)
-        # np.save(os.path.abspath(os.path.join(ROOT_DIR, 'data/inputs.npy')), output)
+        # np.save(os.path.abspath(os.path.join(ROOT_DIR, 'data/output.npy')), output)
         return output
 
     def generate_char_level_embeddings(self, seed):
