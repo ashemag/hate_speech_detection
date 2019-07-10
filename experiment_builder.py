@@ -261,7 +261,7 @@ class ExperimentBuilder(nn.Module):
             # learning rate
             if self.scheduler is not None:
                 self.scheduler.step()
-                epoch_stats['learning_rate'] = self.optimizer.param_groups[0]['lr']
+            epoch_stats['learning_rate'] = self.optimizer.param_groups[0]['lr']
 
             # save to train stats
             for key, value in epoch_stats.items():

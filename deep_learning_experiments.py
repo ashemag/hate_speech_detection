@@ -103,10 +103,9 @@ def fetch_model_parameters(args_local, input_shape_local):
                               dropout=args_local.dropout)
 
     criterion_local = torch.nn.CrossEntropyLoss()
-    #optimizer_local = torch.optim.Adam(model_local.parameters(), weight_decay=1e-4)
-    optimizer_local = torch.optim.Adam(model_local.parameters(), weight_decay=1e-4, lr=1e-3)
-    #scheduler_local = optim.lr_scheduler.CosineAnnealingLR(optimizer_local, T_max=args_local.num_epochs, eta_min=0.0001)
-    scheduler_local = None
+    optimizer_local = torch.optim.Adam(model_local.parameters(), weight_decay=1e-4)
+    # optimizer_local = torch.optim.Adam(model_local.parameters(), weight_decay=1e-4, lr=1e-3)
+    scheduler_local = optim.lr_scheduler.CosineAnnealingLR(optimizer_local, T_max=args_local.num_epochs, eta_min=1e-4)
     return model_local, criterion_local, optimizer_local, scheduler_local
 
 
