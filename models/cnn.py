@@ -28,7 +28,7 @@ class CNN(nn.Module):
         self.use_bias = use_bias
         self.num_layers = num_layers
         self.drop = nn.Dropout(p=dropout, inplace=False)
-
+        self.logit_linear_layer = None
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
 
@@ -46,20 +46,19 @@ class CNN(nn.Module):
 
         for i in range(self.num_layers):  # for number of layers times
             dilation = int(DILATION_PARAM**i)
-            # dilation = 1
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
                                                              # add a conv layer in the module dict
                                                              kernel_size=3,
-                                                             out_channels=self.num_filters,
+                                                             out_channels=self.num_filters[i],
                                                              padding=dilation,
                                                              bias=False,
                                                              dilation=dilation)
 
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
-            # self.layer_dict['batch_norm_{}'.format(i)] = nn.BatchNorm1d(num_features=out.shape[1])
-            # out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            self.layer_dict['batch_norm_{}'.format(i)] = nn.BatchNorm1d(num_features=out.shape[1])
+            out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)
-            # out = self.drop(out)
+            out = self.drop(out)
 
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
@@ -82,9 +81,9 @@ class CNN(nn.Module):
         out = out.permute([0, 2, 1])
         for i in range(self.num_layers):  # for number of layers times
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
-            # out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)
-            # out = self.drop(out)
+            out = self.drop(out)
 
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
@@ -473,13 +472,11 @@ class CNN(nn.Module):
 
 
 def word_cnn(input_shape, dropout=.5):
-    model = CNN(num_output_classes=4,
-                num_filters=32,
-                num_layers=3,
-                input_shape=input_shape)
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), weight_decay=WEIGHT_DECAY)
-    return model, criterion, optimizer
+    return CNN(num_output_classes=4,
+               num_filters=[32, 32, 32],
+               num_layers=3,
+               input_shape=input_shape,
+               dropout=dropout)
 
 
 def character_cnn(input_shape):
