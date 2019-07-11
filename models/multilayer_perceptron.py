@@ -80,10 +80,7 @@ class CNN(nn.Module):
 
 
 def multi_layer_perceptron(input_shape):
-    model = CNN(num_output_classes=4,
+    return CNN(num_output_classes=4,
                 num_layers=3,
                 input_shape=input_shape)
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4)
-    return model, criterion, optimizer
 

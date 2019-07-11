@@ -9,6 +9,7 @@ from experiment_builder import ExperimentBuilder
 from data_providers import *
 import os
 from models.cnn import *
+from models.densenet import densenet
 from models.multilayer_perceptron import multi_layer_perceptron
 
 # PARAMS
@@ -31,7 +32,7 @@ def get_args():
     parser.add_argument('--name', type=str, default='CNN_Experiment')
     parser.add_argument('--embedding_key', type=str, default='NA')
     parser.add_argument('--embedding_level', type=str, default='NA')
-    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--batch_size', type=int, default=2048)
     parser.add_argument('--dropout', type=float, default=.5)
 
     if VERBOSE:
@@ -81,24 +82,30 @@ def wrap_data(batch_size, seed, x_train, y_train, x_valid, y_valid, x_test, y_te
     return train_data_local, valid_data_local, test_data_local
 
 
-def fetch_model(model, embedding_level, input_shape_local, dropout):
-    if model == 'MLP':
+def fetch_model(model_local, embedding_level, input_shape_local, dropout):
+    if model_local == 'MLP':
         return multi_layer_perceptron(input_shape_local)
-    if embedding_level == 'word':
-        return word_cnn(input_shape_local, dropout)
-    elif embedding_level == 'character':
-        return character_cnn(input_shape_local)
+    if model_local == 'CNN':
+        if embedding_level == 'word' or embedding_level == 'tdidf':
+            return word_cnn(input_shape=input_shape_local, dropout=dropout)
+        elif embedding_level == 'character':
+            return character_cnn(input_shape_local)
+    if model_local == 'DENSENET':
+        return densenet(input_shape_local)
     else:
         raise ValueError("Model key not found {}".format(embedding_level))
 
 
 def fetch_model_parameters(args_local, input_shape_local):
-    model_local, criterion_local, optimizer_local = fetch_model(model=args_local.model,
-                                                                embedding_level=args_local.embedding_level,
-                                                                input_shape_local=input_shape_local,
-                                                                dropout=args_local.dropout)
+    model_local = fetch_model(model_local=args_local.model,
+                              embedding_level=args_local.embedding_level,
+                              input_shape_local=input_shape_local,
+                              dropout=args_local.dropout)
 
-    scheduler_local = optim.lr_scheduler.CosineAnnealingLR(optimizer_local, T_max=args_local.num_epochs, eta_min=0.0001)
+    criterion_local = torch.nn.CrossEntropyLoss()
+    optimizer_local = torch.optim.Adam(model_local.parameters(), weight_decay=1e-4)
+    # optimizer_local = torch.optim.Adam(model_local.parameters(), weight_decay=1e-4, lr=1e-3)
+    scheduler_local = optim.lr_scheduler.CosineAnnealingLR(optimizer_local, T_max=args_local.num_epochs, eta_min=1e-4)
     return model_local, criterion_local, optimizer_local, scheduler_local
 
 
@@ -125,6 +132,7 @@ if __name__ == "__main__":
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
     input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
     model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
+
     # OUTPUT
     folder_title = '_'.join([args.model, args.name, args.embedding_key, args.embedding_level])
     print("=== Writing to folder {} ===".format(folder_title))
@@ -150,6 +158,7 @@ if __name__ == "__main__":
         train_data=train_data,
         valid_data=valid_data,
         test_data=test_data,
+        scheduler=scheduler,
     )
 
     experiment_metrics, test_metrics = experiment.run_experiment()  # run experiment and return experiment metrics
