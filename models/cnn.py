@@ -47,9 +47,14 @@ class CNN(nn.Module):
         """
         x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
         out = self.process(x)
-        print("Building basic block of ConvolutionalNetwork using input shape", out.shape)
+        print("Building basic block of Convolutional Network using input shape", out.shape)
+        context_list = []
 
         for i in range(self.num_layers):  # for number of layers times
+            if i > 0:
+                # to give every layer access to all prev layers (DenseNet connectivity)
+                out = torch.cat(context_list, dim=1)
+
             dilation = int(DILATION_PARAM**i)
             self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
                                                              # add a conv layer in the module dict
@@ -64,7 +69,9 @@ class CNN(nn.Module):
             out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)
             out = self.drop(out)
+            context_list.append(out)
 
+        out = torch.cat(context_list, dim=1)
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
 
@@ -83,12 +90,17 @@ class CNN(nn.Module):
         :return: preds (b, num_classes)
         """
         out = self.process(x)
+        context_list = []
         for i in range(self.num_layers):  # for number of layers times
+            if i > 0:
+                out = torch.cat(context_list, dim=1)
             out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
             out = self.layer_dict['batch_norm_{}'.format(i)](out)
             out = F.leaky_relu(out)
             out = self.drop(out)
+            context_list.append(out)
 
+        out = torch.cat(context_list, dim=1)
         out = F.avg_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds

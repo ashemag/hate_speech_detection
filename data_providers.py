@@ -4,6 +4,7 @@ import torch.utils.data as data
 from utils import *
 import torch
 import torch.utils.data
+import pandas as pd
 
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
@@ -98,11 +99,12 @@ class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
 
 
 class TextDataProvider(object):
-    def __init__(self, path_data, path_labels):
-        self.path_data = path_data
-        self.path_labels = path_labels
-        self.data = extract_labels(self.path_labels)
-        self.outputs, self.labels = extract_tweets(self.data, self.path_data)
+    def __init__(self, path_data, path_labels, experiment_flag):
+        self.experiment_flag = experiment_flag
+        label_data = pd.read_csv(path_labels, header='infer', index_col=0, squeeze=True).to_dict()
+        data = np.load(os.path.join(ROOT_DIR, path_data))
+        data = data[()]
+        self.outputs, self.labels = extract_tweets(label_data, data, self.experiment_flag)
 
     @staticmethod
     def _fetch_model(tweets_corpus, key):
@@ -180,7 +182,7 @@ class TextDataProvider(object):
             outputs_embed.append(output)
         return outputs_embed
 
-    def generate_tdidf_embeddings(self, seed, verbose=True):
+    def generate_tdidf_embeddings(self, seed):
         x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(self.outputs, self.labels, seed)
 
         x_train = convert_to_feature_embeddings(x_train, key='tokens')
@@ -196,14 +198,14 @@ class TextDataProvider(object):
                 'x_test': vectorizer.transform(x_test).todense(),
                 'y_test': y_test}
 
-    def generate_word_level_embeddings(self, embedding_key, seed, experiment_flag):
+    def generate_word_level_embeddings(self, embedding_key, seed):
         x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(self.outputs, self.labels, seed)
         word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
 
         # embed inputs
-        x_train_embed = self.fetch_word_embeddings(x_train, word_vectors, embed_dim, experiment_flag)
-        x_valid_embed = self.fetch_word_embeddings(x_valid, word_vectors, embed_dim, experiment_flag)
-        x_test_embed = self.fetch_word_embeddings(x_test, word_vectors, embed_dim, experiment_flag)
+        x_train_embed = self.fetch_word_embeddings(x_train, word_vectors, embed_dim, self.experiment_flag)
+        x_valid_embed = self.fetch_word_embeddings(x_valid, word_vectors, embed_dim, self.experiment_flag)
+        x_test_embed = self.fetch_word_embeddings(x_test, word_vectors, embed_dim, self.experiment_flag)
 
         return {'x_train': convert_to_feature_embeddings(x_train_embed),
                 'y_train': y_train,

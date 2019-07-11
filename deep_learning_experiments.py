@@ -50,10 +50,10 @@ def get_args():
 def extract_data(embedding_key, embedding_level, seed, experiment_flag):
     path_data = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_DATA'])
     path_labels = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_LABELS'])
-    data_provider = TextDataProvider(path_data, path_labels)
+    data_provider = TextDataProvider(path_data, path_labels, experiment_flag)
 
     if embedding_level == 'word':
-        output = data_provider.generate_word_level_embeddings(embedding_key, seed, experiment_flag)
+        output = data_provider.generate_word_level_embeddings(embedding_key, seed)
     elif embedding_level == 'char':
         output = data_provider.generate_char_level_embeddings(seed)
     elif embedding_level == 'tdidf':

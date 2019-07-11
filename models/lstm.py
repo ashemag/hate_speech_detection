@@ -47,7 +47,8 @@ class LSTM(nn.Module):
                                           hidden_size=self.num_hidden_layers,
                                           bias=self.use_bias,
                                           num_layers=1,
-                                          dropout=.5)
+                                          dropout=.5,
+                                          bidirectional=True)
 
         out, _ = self.layer_dict['lstm'](out)
         out = out.permute(1, 0, 2)

@@ -64,7 +64,7 @@ def process_outputs(outputs, experiment_flag=2):
 
         #  tokenize / clean
         if experiment_flag == 1:
-            output['token'] = output['tweet'].translate(str.maketrans('', '', string.punctuation))
+            output['tokens'] = output['tweet'].translate(str.maketrans('', '', string.punctuation))
         elif experiment_flag == 2:
             output['tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)) + \
                                output['tweet'].translate(str.maketrans('', '', string.punctuation))
@@ -74,39 +74,31 @@ def process_outputs(outputs, experiment_flag=2):
     return outputs_processed
 
 
-def extract_tweets(data, filename, experiment_flag=2, subset=None):
+def extract_tweets(label_data, data, experiment_flag):
     print("=== Extracting tweets from JSON ===")
-    line_count = 0
+    labels = []
     labels_map = {'hateful': 0, 'abusive': 1, 'normal': 2, 'spam': 3}
     error_count = 0
     outputs = []
-    labels = []
-    with open(filename, 'r') as f:
-        for line in f.readlines():
-            if subset is not None and line_count >= subset:
-                break
-            obj = json.loads(line)
 
-            if data[obj['id_str']] not in labels_map:
-                error_count += 1
-                continue
+    for key, value in data.items():
 
-            line_count += 1
-
-            output = {
-                'tweet': obj['text'],
-                'label': labels_map[data[obj['id_str']]],
-                'retweet_count': int(obj['retweet_count']),
-                'retweeted': int(obj['retweeted']),
-                'in_reply_to_status_id': obj['in_reply_to_status_id'] if obj['in_reply_to_status_id'] is not None else -1,
-                'favorite_count': int(obj['favorite_count']),
-                'label_string': data[obj['id_str']]
-            }
-            outputs.append(output)
-            labels.append(output['label'])
-    print("{}/{} tweets removed".format(error_count, line_count))
-    processed_outputs = process_outputs(outputs, experiment_flag)
-    return processed_outputs, labels
+        if int(value['id_str']) not in label_data:
+            error_count += 1
+            continue
+        output = {}
+        output['tweet'] = value['text']
+        output['label'] = labels_map[label_data[int(value['id_str'])]]
+        labels.append(output['label'])
+        output['retweet_count'] = value['retweet_count']
+        output['retweeted'] = int(value['retweeted'])
+        output['in_reply_to_status_id'] = value['in_reply_to_status_id'] if value[
+                                                                                'in_reply_to_status_id'] is not None else -1
+        output['favorite_count'] = value['favorite_count']
+        output['label_string'] = label_data[int(value['id_str'])]
+        outputs.append(output)
+    outputs_processed = process_outputs(outputs, experiment_flag)
+    return outputs_processed, labels
 
 
 def prepare_output_file(filename, output=None, file_action_key='a+', aggregate=False):
