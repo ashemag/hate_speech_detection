@@ -98,17 +98,17 @@ class DenseNet(Network):
     def reset_parameters(self):
         pass
 
-def DenseNet121():
-    return DenseNet(Bottleneck, [4,4,4,4], growth_rate=16)
-
-def DenseNet169():
-    return DenseNet(Bottleneck, [6,12,32,32], growth_rate=32)
-
-def DenseNet201():
-    return DenseNet(Bottleneck, [6,12,48,32], growth_rate=32)
-
-def DenseNet161():
-    return DenseNet(Bottleneck, [6,12,36,24], growth_rate=48)
+# def DenseNet121():
+#     return DenseNet(Bottleneck, [4,4,4,4], growth_rate=16)
+#
+# def DenseNet169():
+#     return DenseNet(Bottleneck, [6,12,32,32], growth_rate=32)
+#
+# def DenseNet201():
+#     return DenseNet(Bottleneck, [6,12,48,32], growth_rate=32)
+#
+# def DenseNet161():
+#     return DenseNet(Bottleneck, [6,12,36,24], growth_rate=48)
 
 
 def densenet(input_shape):

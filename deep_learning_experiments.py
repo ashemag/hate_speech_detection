@@ -10,6 +10,7 @@ from data_providers import *
 import os
 from models.cnn import *
 from models.densenet import densenet
+from models.lstm import lstm
 from models.multilayer_perceptron import multi_layer_perceptron
 
 # PARAMS
@@ -89,9 +90,11 @@ def fetch_model(model_local, embedding_level, input_shape_local, dropout):
         if embedding_level == 'word' or embedding_level == 'tdidf':
             return word_cnn(input_shape=input_shape_local, dropout=dropout)
         elif embedding_level == 'character':
-            return character_cnn(input_shape_local)
+            pass
     if model_local == 'DENSENET':
         return densenet(input_shape_local)
+    if model_local == 'LSTM':
+        return lstm(input_shape_local)
     else:
         raise ValueError("Model key not found {}".format(embedding_level))
 
