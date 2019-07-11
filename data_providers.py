@@ -1,23 +1,9 @@
-import json
-import csv
-import time
-
-import numpy as np
-from collections import Counter
-
-from sklearn.feature_extraction.text import TfidfTransformer, CountVectorizer, TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.feature_extraction.text import TfidfVectorizer
 from gensim.models import word2vec, KeyedVectors
-
-from globals import ROOT_DIR
-from preprocessor import Preprocessor
 import torch.utils.data as data
 from utils import *
-import pandas as pd
 import torch
 import torch.utils.data
-import torchvision
 
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
@@ -31,9 +17,10 @@ NUM_CLASSES = 4
 class DataProvider(data.Dataset):
     """Generic data provider."""
 
-    def __init__(self, inputs, targets, seed, make_one_hot=False):
+    def __init__(self, inputs, targets, seed, transform=None, make_one_hot=False):
         self.inputs = np.array(inputs)
         self.num_classes = len(set(targets))
+        self.transform = transform
 
         if make_one_hot:
             self.targets = self.to_one_of_k(targets)
@@ -45,7 +32,11 @@ class DataProvider(data.Dataset):
         return len(self.inputs)
 
     def __getitem__(self, index):
-        return self.inputs[index], self.targets[index]
+        sample = self.inputs[index]
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample, self.targets[index]
 
     def to_one_of_k(self, int_targets):
         """Converts integer coded class target to 1 of K coded targets.
@@ -111,7 +102,7 @@ class TextDataProvider(object):
         self.path_data = path_data
         self.path_labels = path_labels
         self.data = extract_labels(self.path_labels)
-        self.raw_tweets, self.labels = extract_tweets(self.data, self.path_data)
+        self.outputs, self.labels = extract_tweets(self.data, self.path_data)
 
     @staticmethod
     def _fetch_model(tweets_corpus, key):
@@ -146,14 +137,6 @@ class TextDataProvider(object):
         return word_vectors, embed_dim
 
     @staticmethod
-    def tokenize(raw_tweets):
-        tweets = []
-        for tweet in raw_tweets:
-            text, tokens = process_text(tweet)
-            tweets.append(tokens)
-        return tweets
-
-    @staticmethod
     def fetch_character_symbols(raw_tweets):
         """
         Dynamically create mapping for one hot encoding of chars
@@ -167,55 +150,20 @@ class TextDataProvider(object):
         char_mapping = {char: np.eye(len(chars))[index] for index, char in enumerate(chars)}
         return chars, char_mapping
 
-    def fetch_character_embeddings(self, raw_tweets):
-        print("=== Creating Character Embeddings ===")
-        start = time.time()
-        char_mapping = self.fetch_character_symbols(raw_tweets)
-        char_dimension = len(char_mapping)
-        processed_tweets = []
-        for i, tweet in enumerate(raw_tweets):
-            embedded_tweet = []
-
-            # trim if too large
-            if len(tweet) >= TWEET_SENTENCE_SIZE:
-                tweet = tweet[:TWEET_SENTENCE_SIZE]
-
-            # convert all into word embeddings
-            for word in tweet:
-                # trim if too large
-                if len(word) >= TWEET_WORD_SIZE:
-                    word = word[:TWEET_WORD_SIZE]
-
-                embedded_word = [char_mapping[char] if char in char_mapping else np.zeros(char_dimension) for char in word]
-
-                # pad if too short
-                if len(word) <= TWEET_WORD_SIZE:
-                    diff = TWEET_WORD_SIZE - len(word)
-                    embedded_word += [np.zeros(char_dimension) for _ in range(diff)]
-
-                embedded_tweet.append(np.array(embedded_word))
-
-            # pad if too short
-            if len(tweet) <= TWEET_SENTENCE_SIZE:
-                diff = TWEET_SENTENCE_SIZE - len(tweet)
-                random_words = np.zeros((diff, TWEET_WORD_SIZE, char_dimension))
-                for random_word in random_words:
-                    embedded_tweet.append(random_word)
-
-            processed_tweets.append(np.array(embedded_tweet))
-
-        print("=== Finished Character Embeddings ({} mins) ===".format(round((time.time() - start) / 60, 2)))
-        return processed_tweets
-
     @staticmethod
-    def fetch_word_embeddings(raw_tweets, word_vectors, embed_dim):
-        processed_tweets = []
-        for i, tweet in enumerate(raw_tweets):
+    def fetch_word_embeddings(outputs, word_vectors, embed_dim, experiment_flag=2):
+        tweet_sentence_size = TWEET_SENTENCE_SIZE
+        if experiment_flag == 2:
+            tweet_sentence_size *= 2
+
+        outputs_embed = []
+        for i, output in enumerate(outputs):
+            tweet = output['tokens']
             embedded_tweet = []
 
             # trim if too large
-            if len(tweet) >= TWEET_SENTENCE_SIZE:
-                tweet = tweet[:TWEET_SENTENCE_SIZE]
+            if len(tweet) >= tweet_sentence_size:
+                tweet = tweet[:tweet_sentence_size]
 
             # convert all into word embeddings
             for word in tweet:
@@ -223,47 +171,47 @@ class TextDataProvider(object):
                 embedded_tweet.append(embedding)
 
             # pad if too short
-            if len(tweet) < TWEET_SENTENCE_SIZE:
-                diff = TWEET_SENTENCE_SIZE - len(tweet)
+            if len(tweet) < tweet_sentence_size:
+                diff = tweet_sentence_size - len(tweet)
                 embedded_tweet += [generate_random_embedding(embed_dim) for _ in range(diff)]
 
-            assert len(embedded_tweet) == TWEET_SENTENCE_SIZE
-            processed_tweets.append(embedded_tweet)
-        return processed_tweets
+            assert len(embedded_tweet) == tweet_sentence_size
+            output['embedding'] = embedded_tweet
+            outputs_embed.append(output)
+        return outputs_embed
 
     def generate_tdidf_embeddings(self, seed, verbose=True):
-        x_train, y_train, x_val, y_val, x_test, y_test = split_data(self.raw_tweets, self.labels, seed)
+        x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(self.outputs, self.labels, seed)
 
-        vectorizer = TfidfVectorizer(use_idf=True, max_features=10000, stop_words='english')
+        x_train = convert_to_feature_embeddings(x_train, key='tokens')
+        x_valid = convert_to_feature_embeddings(x_valid, key='tokens')
+        x_test = convert_to_feature_embeddings(x_test, key='tokens')
+
+        vectorizer = TfidfVectorizer(use_idf=True, max_features=10000)
 
         return {'x_train': vectorizer.fit_transform(x_train).todense(),
                 'y_train': y_train,
-                'x_valid': vectorizer.transform(x_val).todense(),
-                'y_valid': y_val,
+                'x_valid': vectorizer.transform(x_valid).todense(),
+                'y_valid': y_valid,
                 'x_test': vectorizer.transform(x_test).todense(),
                 'y_test': y_test}
 
-    def _generate_embedding_output(self, processed_tweets, seed):
-        x_train, y_train, x_val, y_val, x_test, y_test = split_data(processed_tweets, self.labels, seed)
-        return {'x_train': x_train,
+    def generate_word_level_embeddings(self, embedding_key, seed, experiment_flag):
+        x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(self.outputs, self.labels, seed)
+        word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
+
+        # embed inputs
+        x_train_embed = self.fetch_word_embeddings(x_train, word_vectors, embed_dim, experiment_flag)
+        x_valid_embed = self.fetch_word_embeddings(x_valid, word_vectors, embed_dim, experiment_flag)
+        x_test_embed = self.fetch_word_embeddings(x_test, word_vectors, embed_dim, experiment_flag)
+
+        return {'x_train': convert_to_feature_embeddings(x_train_embed),
                 'y_train': y_train,
-                'x_valid': x_val,
-                'y_valid': y_val,
-                'x_test': x_test,
+                'x_valid': convert_to_feature_embeddings(x_valid_embed),
+                'y_valid': y_valid,
+                'x_test': convert_to_feature_embeddings(x_test_embed),
                 'y_test': y_test
                 }
-
-    def generate_word_level_embeddings(self, embedding_key, seed):
-        # if saved:
-        #     return np.load(os.path.abspath(os.path.join(ROOT_DIR, 'data/output.npy')))
-        # else:
-        raw_tweets = self.tokenize(self.raw_tweets)
-        x_train, y_train, x_val, y_val, x_test, y_test = split_data(raw_tweets, self.labels, seed)
-        word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
-        processed_tweets = self.fetch_word_embeddings(raw_tweets, word_vectors, embed_dim)
-        output = self._generate_embedding_output(processed_tweets, seed)
-        # np.save(os.path.abspath(os.path.join(ROOT_DIR, 'data/output.npy')), output)
-        return output
 
     def generate_char_level_embeddings(self, seed):
         raw_tweets = self.tokenize(self.raw_tweets)

@@ -86,5 +86,5 @@ class LSTM(nn.Module):
 
 def lstm(input_shape):
     return LSTM(num_output_classes=4,
-                num_hidden_layers=3,
+                num_hidden_layers=10,
                 input_shape=input_shape)

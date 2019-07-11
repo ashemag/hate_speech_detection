@@ -4,14 +4,18 @@ Runs baseline experiments
 from comet_ml import Experiment # necessary for comet to function
 import argparse
 import configparser
+import torch
 from torch import optim
+from globals import ROOT_DIR
 from experiment_builder import ExperimentBuilder
-from data_providers import *
+from data_providers import TextDataProvider, ImbalancedDatasetSampler, DataProvider
 import os
-from models.cnn import *
+from models.cnn import word_cnn
 from models.densenet import densenet
 from models.lstm import lstm
 from models.multilayer_perceptron import multi_layer_perceptron
+import time
+import numpy as np
 
 # PARAMS
 
@@ -35,6 +39,7 @@ def get_args():
     parser.add_argument('--embedding_level', type=str, default='NA')
     parser.add_argument('--batch_size', type=int, default=2048)
     parser.add_argument('--dropout', type=float, default=.5)
+    parser.add_argument('--experiment_flag', type=int, default=1)
 
     if VERBOSE:
         arg_str = [(str(key), str(value)) for (key, value) in vars(parser.parse_args()).items()]
@@ -42,22 +47,18 @@ def get_args():
     return parser.parse_args()
 
 
-def extract_data(embedding_key, embedding_level, seed):
+def extract_data(embedding_key, embedding_level, seed, experiment_flag):
     path_data = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_DATA'])
     path_labels = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_LABELS'])
     data_provider = TextDataProvider(path_data, path_labels)
 
     if embedding_level == 'word':
-        output = data_provider.generate_word_level_embeddings(embedding_key, seed)
+        output = data_provider.generate_word_level_embeddings(embedding_key, seed, experiment_flag)
     elif embedding_level == 'char':
         output = data_provider.generate_char_level_embeddings(seed)
     elif embedding_level == 'tdidf':
         output = data_provider.generate_tdidf_embeddings(seed)
 
-    if VERBOSE:
-        print("[Sizes] Training set: {}, Validation set: {}, Test set: {}".format(len(output['x_train']),
-                                                                                  len(output['x_valid']),
-                                                                                  len(output['x_test'])))
     return output
 
 
@@ -131,7 +132,7 @@ def generate_device(seed):
 if __name__ == "__main__":
     args = get_args()
     device = generate_device(args.seed)
-    data = extract_data(args.embedding_key, args.embedding_level, args.seed)
+    data = extract_data(args.embedding_key, args.embedding_level, args.seed, args.experiment_flag)
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
     input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
     model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
