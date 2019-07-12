@@ -2,13 +2,13 @@
 Helpers for tweet extraction/processing
 """
 import csv
-import json
 import os
-from collections import OrderedDict
-
 from sklearn.model_selection import train_test_split
-from preprocessor import Preprocessor
+from globals import ROOT_DIR
 import numpy as np
+import string
+
+TWEET_SENTENCE_SIZE = 17  # 16 is average tweet token length
 
 
 def split_data(x, y, seed, verbose=True):
@@ -38,63 +38,68 @@ def generate_random_embedding(embed_dim):
     return np.random.normal(scale=0.6, size=(embed_dim,))
 
 
-def process_text(text):
-    p = Preprocessor()
-    p.clean(text)
-    p.tokenize()
-    return p.text, p.tokens
+def convert_to_feature_embeddings(x_embed, key='embedding'):
+    if key == 'tokens': #  for tdidf
+        return [' '.join(x[key]) for x in x_embed]
+    return [x[key] for x in x_embed]
 
 
-def extract_tweets(data, filename, subset=None):
+def process_outputs(outputs, experiment_flag=2):
+    """
+    Cleans text, creates context tweets for reply experiment, and tokenizes
+    :param outputs: tweet data / label
+    :param experiment_flag: denotes what round of experiments this is, 1) tweet, 2) tweet + context tweet 3) reply net
+    :return:
+    """
+    replies = np.load(os.path.join(ROOT_DIR, 'data/reply_data.npy'))
+    replies = replies[()]
+
+    outputs_processed = []
+    for output in outputs:
+        # add context tweet
+        status_id = str(output['in_reply_to_status_id'])
+        if status_id in replies:
+            output['context_tweet'] = replies[status_id]
+        else:
+            output['context_tweet'] = ' '.join([' '] * TWEET_SENTENCE_SIZE)  # will be a random embedding
+
+        #  tokenize / clean
+        if experiment_flag == 1:
+            output['tokens'] = output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
+        elif experiment_flag == 2:
+            output['tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)).lower() + \
+                               output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
+
+        output['tokens'] = output['tokens'].split(' ')
+        outputs_processed.append(output)
+    return outputs_processed
+
+
+def extract_tweets(label_data, data, experiment_flag):
     print("=== Extracting tweets from JSON ===")
-    tweets = []
     labels = []
-    line_count = 0
     labels_map = {'hateful': 0, 'abusive': 1, 'normal': 2, 'spam': 3}
     error_count = 0
-    tweet_length = []
-    retweet_count = []
-    favorite_count = []
-    followers_count = []
-    tweet_char_length = []
-    locations = []
-    word_length = []
-    geo = []
-    with open(filename, 'r') as f:
-        for line in f.readlines():
-            if subset is not None and line_count >= subset:
-                break
-            obj = json.loads(line)
+    outputs = []
 
-            geo.append(1 if obj['geo'] is not None else 0)
-            locations.append(obj['user']['location'])
-            text_raw = obj['text']
+    for key, value in data.items():
 
-            if data[obj['id_str']] not in labels_map:
-                error_count += 1
-                continue
-
-            labels.append(labels_map[data[obj['id_str']]])
-            if int(labels[-1]) == 0:
-                retweet_count.append(obj['retweet_count'])
-                followers_count.append(obj['user']['followers_count'])
-                favorite_count.append(obj['favorite_count'])
-
-
-            tweets.append(text_raw)
-            tweet_char_length.append(len(text_raw))
-            words = text_raw.split(' ')
-            word_length += [len(word) for word in words]
-            tweet_length.append(len(words))
-            line_count += 1
-
-    print("[Stats] Removed {}/{} labels".format(error_count, line_count))
-    print("[Stats] Average tweet length is {} words".format(int(np.mean(tweet_length))))
-    print("[Stats] Average tweet length is {} characters".format(int(np.mean(tweet_char_length))))
-    print("[Stats] Average {} is {}".format('favorite count', int(np.mean(favorite_count))))
-    print("[Stats] Average {} is {}".format('retweet count', int(np.mean(retweet_count))))
-    print("[Stats] Average {} is {}".format('follower count', int(np.median(followers_count))))
-    return tweets, labels
+        if int(value['id_str']) not in label_data:
+            error_count += 1
+            continue
+        output = {}
+        output['tweet'] = value['text']
+        output['label'] = labels_map[label_data[int(value['id_str'])]]
+        labels.append(output['label'])
+        output['retweet_count'] = value['retweet_count']
+        output['retweeted'] = int(value['retweeted'])
+        output['in_reply_to_status_id'] = value['in_reply_to_status_id'] if value[
+                                                                                'in_reply_to_status_id'] is not None else -1
+        output['favorite_count'] = value['favorite_count']
+        output['label_string'] = label_data[int(value['id_str'])]
+        outputs.append(output)
+    outputs_processed = process_outputs(outputs, experiment_flag)
+    return outputs_processed, labels
 
 
 def prepare_output_file(filename, output=None, file_action_key='a+', aggregate=False):

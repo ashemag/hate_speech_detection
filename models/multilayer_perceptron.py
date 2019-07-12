@@ -2,10 +2,9 @@ from comet_ml import Experiment
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.base import Network
 
 
-class CNN(nn.Module):
+class MLP(nn.Module):
     def __init__(self, input_shape, num_output_classes, num_layers, use_bias=False):
         """
         Initializes a convolutional network module object.
@@ -16,7 +15,7 @@ class CNN(nn.Module):
         :param num_layers: Number of conv layers (excluding dim reduction stages)
         :param use_bias: Whether our convolutions will use a bias.
         """
-        super(CNN, self).__init__()
+        super(MLP, self).__init__()
         # set up class attributes useful in building the network and inference
         self.input_shape = input_shape
         self.num_output_classes = num_output_classes
@@ -38,7 +37,7 @@ class CNN(nn.Module):
         print("Building basic block of network using input shape {}".format(out.shape))
         if len(out.shape) > 2:
             out = out.permute([0, 2, 1])
-            out = F.avg_pool1d(out, out.shape[-1])
+            out = F.max_pool1d(out, out.shape[-1])
             out = out.view(out.shape[0], -1)
 
         for i in range(self.num_layers):
@@ -60,8 +59,9 @@ class CNN(nn.Module):
         out = x
         if len(out.shape) > 2:
             out = out.permute([0, 2, 1])
-            out = F.avg_pool1d(out, out.shape[-1])
+            out = F.max_pool1d(out, out.shape[-1])
             out = out.view(out.shape[0], -1)
+
         for i in range(self.num_layers):
             if i > 0:
                 out = F.leaky_relu(out)
@@ -80,7 +80,6 @@ class CNN(nn.Module):
 
 
 def multi_layer_perceptron(input_shape):
-    return CNN(num_output_classes=4,
-                num_layers=3,
-                input_shape=input_shape)
-
+    return MLP(num_output_classes=4,
+               num_layers=3,
+               input_shape=input_shape)
