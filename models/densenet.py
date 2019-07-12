@@ -112,4 +112,4 @@ class DenseNet(Network):
 
 
 def densenet(input_shape):
-    return DenseNet(input_shape, Bottleneck, [6,12,24,16], growth_rate=12)
+    return DenseNet(input_shape, Bottleneck, [4,4,4,4], growth_rate=12)

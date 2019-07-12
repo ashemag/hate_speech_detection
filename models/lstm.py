@@ -46,7 +46,7 @@ class LSTM(nn.Module):
         self.layer_dict['lstm'] = nn.LSTM(input_size=out.shape[-1],
                                           hidden_size=self.num_hidden_layers,
                                           bias=self.use_bias,
-                                          num_layers=1,
+                                          num_layers=3,
                                           dropout=.5,
                                           bidirectional=True)
 
@@ -87,5 +87,5 @@ class LSTM(nn.Module):
 
 def lstm(input_shape):
     return LSTM(num_output_classes=4,
-                num_hidden_layers=10,
+                num_hidden_layers=5,
                 input_shape=input_shape)

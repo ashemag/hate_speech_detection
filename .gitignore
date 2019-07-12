@@ -71,3 +71,4 @@ scripts*
 *config*
 *checkpoints*
 *baseline_experiments/testing*
+models/model

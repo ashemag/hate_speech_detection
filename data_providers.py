@@ -152,32 +152,45 @@ class TextDataProvider(object):
         char_mapping = {char: np.eye(len(chars))[index] for index, char in enumerate(chars)}
         return chars, char_mapping
 
-    @staticmethod
-    def fetch_word_embeddings(outputs, word_vectors, embed_dim, experiment_flag=2):
-        tweet_sentence_size = TWEET_SENTENCE_SIZE
-        if experiment_flag == 2:
-            tweet_sentence_size *= 2
+    def process_tweet(self, tweet, embed_dim, word_vectors):
+        embedded_tweet = []
 
+        # trim if too large
+        if len(tweet) >= TWEET_SENTENCE_SIZE:
+            tweet = tweet[:TWEET_SENTENCE_SIZE]
+
+        # convert all into word embeddings
+        for word in tweet:
+            embedding = generate_random_embedding(embed_dim) if word not in word_vectors else word_vectors[word]
+            embedded_tweet.append(embedding)
+
+        # pad if too short
+        if len(tweet) < TWEET_SENTENCE_SIZE:
+            diff = TWEET_SENTENCE_SIZE - len(tweet)
+            embedded_tweet += [generate_random_embedding(embed_dim) for _ in range(diff)]
+        return embedded_tweet
+
+    def fetch_word_embeddings(self, outputs, word_vectors, embed_dim, experiment_flag=2):
         outputs_embed = []
         for i, output in enumerate(outputs):
+
+            # process first tweet
             tweet = output['tokens']
-            embedded_tweet = []
+            embedded_tweet = self.process_tweet(tweet, embed_dim, word_vectors)
 
-            # trim if too large
-            if len(tweet) >= tweet_sentence_size:
-                tweet = tweet[:tweet_sentence_size]
+            if experiment_flag == 2:
+                #proceses second tweet
+                if output['context_tweet'] is None:
+                    for i in range(TWEET_SENTENCE_SIZE):
+                        blank_embedding = np.zeros(embed_dim,)
+                        embedded_tweet.append(blank_embedding)
+                else:
+                    context_embedding = self.process_tweet(output['context_tweet'], embed_dim, word_vectors)
+                    for i in range(TWEET_SENTENCE_SIZE):
+                        embedded_tweet.append(context_embedding[i])
 
-            # convert all into word embeddings
-            for word in tweet:
-                embedding = generate_random_embedding(embed_dim) if word not in word_vectors else word_vectors[word]
-                embedded_tweet.append(embedding)
+                assert len(embedded_tweet) == TWEET_SENTENCE_SIZE*2
 
-            # pad if too short
-            if len(tweet) < tweet_sentence_size:
-                diff = tweet_sentence_size - len(tweet)
-                embedded_tweet += [generate_random_embedding(embed_dim) for _ in range(diff)]
-
-            assert len(embedded_tweet) == tweet_sentence_size
             output['embedding'] = embedded_tweet
             outputs_embed.append(output)
         return outputs_embed

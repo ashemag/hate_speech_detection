@@ -61,14 +61,13 @@ def process_outputs(outputs, experiment_flag=2):
         if status_id in replies:
             output['context_tweet'] = replies[status_id]
         else:
-            output['context_tweet'] = ' '.join([' '] * TWEET_SENTENCE_SIZE)  # will be a random embedding
+            output['context_tweet'] = None
 
         #  tokenize / clean
-        if experiment_flag == 1:
-            output['tokens'] = output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
-        elif experiment_flag == 2:
-            output['tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)).lower() + \
-                               output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
+        output['tokens'] = output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
+
+        if experiment_flag == 2:
+            output['context_tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)).lower() if output['context_tweet'] else None
 
         output['tokens'] = output['tokens'].split(' ')
         outputs_processed.append(output)

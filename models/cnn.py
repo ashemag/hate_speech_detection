@@ -122,7 +122,7 @@ class CNN(nn.Module):
 
 def word_cnn(input_shape, dropout=.5):
     return CNN(num_output_classes=4,
-               num_filters=[32, 32, 32],
+               num_filters=[8, 8, 8],
                num_layers=3,
                input_shape=input_shape,
                dropout=dropout)
