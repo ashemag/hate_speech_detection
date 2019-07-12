@@ -2,12 +2,13 @@
 Helpers for tweet extraction/processing
 """
 import csv
-import json
 import os
 from sklearn.model_selection import train_test_split
 from globals import ROOT_DIR
 import numpy as np
 import string
+
+TWEET_SENTENCE_SIZE = 17  # 16 is average tweet token length
 
 
 def split_data(x, y, seed, verbose=True):
@@ -60,14 +61,14 @@ def process_outputs(outputs, experiment_flag=2):
         if status_id in replies:
             output['context_tweet'] = replies[status_id]
         else:
-            output['context_tweet'] = output['tweet']
+            output['context_tweet'] = ' '.join([' '] * TWEET_SENTENCE_SIZE)  # will be a random embedding
 
         #  tokenize / clean
         if experiment_flag == 1:
-            output['tokens'] = output['tweet'].translate(str.maketrans('', '', string.punctuation))
+            output['tokens'] = output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
         elif experiment_flag == 2:
-            output['tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)) + \
-                               output['tweet'].translate(str.maketrans('', '', string.punctuation))
+            output['tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)).lower() + \
+                               output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
 
         output['tokens'] = output['tokens'].split(' ')
         outputs_processed.append(output)

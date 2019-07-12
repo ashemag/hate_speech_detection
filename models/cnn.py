@@ -45,7 +45,7 @@ class CNN(nn.Module):
         """
         Builds network whilst automatically inferring shapes of layers.
         """
-        x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
+        x = torch.zeros(self.input_shape)  # create dummy inputs to be used to infer shapes of layers
         out = self.process(x)
         print("Building basic block of Convolutional Network using input shape", out.shape)
         context_list = []
@@ -72,7 +72,7 @@ class CNN(nn.Module):
             context_list.append(out)
 
         out = torch.cat(context_list, dim=1)
-        out = F.avg_pool1d(out, out.shape[-1])
+        out = F.max_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
 
         self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
@@ -101,7 +101,7 @@ class CNN(nn.Module):
             context_list.append(out)
 
         out = torch.cat(context_list, dim=1)
-        out = F.avg_pool1d(out, out.shape[-1])
+        out = F.max_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
         out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
 
