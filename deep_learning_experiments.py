@@ -16,6 +16,7 @@ from models.lstm import lstm
 from models.multilayer_perceptron import multi_layer_perceptron
 import time
 import numpy as np
+from models.model_pytorch import TransformerModel, load_openai_pretrained_model, DEFAULT_CONFIG
 
 # PARAMS
 
@@ -135,13 +136,15 @@ if __name__ == "__main__":
     data = extract_data(args.embedding_key, args.embedding_level, args.seed, args.experiment_flag)
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
     input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
-    model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
+    _, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
 
     # OUTPUT
     folder_title = '_'.join([args.model, args.name, args.embedding_key, args.embedding_level])
     print("=== Writing to folder {} ===".format(folder_title))
     results_dir = os.path.join(ROOT_DIR, 'results/{}').format(folder_title)
     start = time.time()
+    model = TransformerModel(DEFAULT_CONFIG)
+    load_openai_pretrained_model(model)
 
     hyper_params = {
         'seed': args.seed,

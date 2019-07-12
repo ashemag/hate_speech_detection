@@ -228,7 +228,7 @@ class ExperimentBuilder(nn.Module):
         epoch_elapsed_time = "{:.4f}".format(epoch_elapsed_time)
         print("\n===Epoch {}===\n{}===Elapsed time: {} mins===".format(index, out_string, epoch_elapsed_time))
 
-    def run_experiment(self, round_param=4):
+    def run_experiment(self):
         """
         Runs experiment train and evaluation iterations, saving the model and best val model and val model accuracy after each epoch
         :return: The summary current_epoch_losses from starting epoch to total_epochs.
