@@ -8,20 +8,21 @@ import numpy as np
 import time
 from sklearn.metrics import f1_score, precision_score, recall_score
 from utils import prepare_output_file
+from globals import TWEET_SENTENCE_SIZE
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
 DEBUG = False
 
 
 class ExperimentBuilder(nn.Module):
-    def __init__(self, network_model, device, hyper_params, train_data, valid_data, test_data, scheduler=None):
+    def __init__(self, network_model, device, hyper_params, train_data, valid_data, test_data, experiment_flag, scheduler=None):
         """
         Initializes an ExperimentBuilder object. Such an object takes care of running training and evaluation of a deep net
         on a given dataset. It also takes care of saving per epoch models and automatically inferring the best val model
         to be used for evaluating the test set metrics.
         """
         super(ExperimentBuilder, self).__init__()
-
+        self.experiment_flag = experiment_flag
         self.experiment_name = hyper_params['experiment_name']
         self.model = network_model
         self.model.reset_parameters()
@@ -50,10 +51,10 @@ class ExperimentBuilder(nn.Module):
         self.best_val_model_criteria = 0.
 
         if not os.path.exists(self.experiment_folder):  # If experiment directory does not exist
-            os.mkdir(self.experiment_folder)  # create the experiment directory
+            os.makedirs(self.experiment_folder)  # create the experiment directory
 
         if not os.path.exists(self.experiment_saved_models):
-            os.mkdir(self.experiment_saved_models)  # create the experiment saved models directory
+            os.makedirs(self.experiment_saved_models)  # create the experiment saved models directory
 
         self.num_epochs = hyper_params['num_epochs']
         self.criterion = nn.CrossEntropyLoss().to(self.device)  # send the loss computation to the GPU
@@ -76,6 +77,22 @@ class ExperimentBuilder(nn.Module):
 
         return total_num_params
 
+    def forward_pass_helper(self, x):
+        if self.experiment_flag == 2 and len(x.shape) == 3: # not for tdidf
+            # separate embeddings
+            original_tweet_embed = x[:, 0:TWEET_SENTENCE_SIZE, :]
+            context_tweet_embed = x[:, TWEET_SENTENCE_SIZE:, :]
+            out_tweet = self.model.forward(original_tweet_embed)
+            out_context_tweet = self.model.forward(context_tweet_embed)
+            out = torch.cat((out_tweet, out_context_tweet), 1)
+            fc_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
+                                 out_features=self.model.num_output_classes,
+                                 bias=self.model.use_bias)
+            return fc_layer(out)
+
+        out = self.model.forward(x)  # forward the data in the model
+        return self.model.fc_layer(out)
+
     def run_train_iter(self, x, y, stats, experiment_key='train'):
         """
         Receives the inputs and targets for the model and runs a training iteration. Returns loss and accuracy metrics.
@@ -90,12 +107,11 @@ class ExperimentBuilder(nn.Module):
         x = x.to(self.device)
         y = y.to(self.device)
         self.optimizer.zero_grad()  # set all weight grads from previous training iters to 0
-        out = self.model.forward(x)  # forward the data in the model
-        # loss = F.cross_entropy(input=out, target=y)  # compute loss
+
+        out = self.forward_pass_helper(x)  # forward the data in the model
+
         loss = self.criterion(out, y)
         loss.backward()  # backpropagate to compute gradients for current iter loss
-
-        self.optimizer.step()  # update network parameters
         self.optimizer.step()  # update network parameters
         _, predicted = torch.max(out.data, 1)  # get argmax of predictions
         accuracy = np.mean(list(predicted.eq(y.data).cpu()))  # compute accuracy
@@ -115,10 +131,10 @@ class ExperimentBuilder(nn.Module):
             x = x.float()
             x = x.to(self.device)
             y = y.to(self.device)
-            out = self.model.forward(x)  # forward the data in the model
-            loss = self.criterion(out, y)
 
-            # loss = F.cross_entropy(out, y)  # compute loss
+            out = self.forward_pass_helper(x)
+
+            loss = self.criterion(out, y)
             _, predicted = torch.max(out.data, 1)  # get argmax of predictions
             accuracy = np.mean(list(predicted.eq(y.data).cpu()))
 

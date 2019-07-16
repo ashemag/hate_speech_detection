@@ -13,6 +13,7 @@ TWEET_WORD_SIZE = 20 # selected by histogram of tweet counts
 FASTTEXT_EMBED_DIM = 300
 EMBED_DIM = 200
 NUM_CLASSES = 4
+BERT_EMBEDDING_NUM = 11
 
 
 class DataProvider(data.Dataset):
@@ -102,40 +103,17 @@ class TextDataProvider(object):
     def __init__(self, path_data, path_labels, experiment_flag):
         self.experiment_flag = experiment_flag
         label_data = pd.read_csv(path_labels, header='infer', index_col=0, squeeze=True).to_dict()
-        data = np.load(os.path.join(ROOT_DIR, path_data))
+        data = np.load(os.path.join(ROOT_DIR, path_data), allow_pickle=True)
         data = data[()]
         self.outputs, self.labels = extract_tweets(label_data, data, self.experiment_flag)
 
     @staticmethod
     def _fetch_model(tweets_corpus, key):
-        if key == 'google':
-            print("[Model] Using {} embeddings".format(key))
-            embed_dim = GOOGLE_EMBED_DIM
-            filename = os.path.join(ROOT_DIR, 'data/GoogleNews-vectors-negative300.bin')
-            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
-        elif key == 'twitter':
+        if key == 'twitter':
             print("[Model] Using {} embeddings".format(key))
             embed_dim = TWITTER_EMBED_DIM
             filename = os.path.join(ROOT_DIR, 'data/word2vec_twitter_model/word2vec_twitter_model.bin')
             word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
-        elif 'fasttext' in key:
-            print("[Model] Using {} embeddings".format(key))
-            embed_dim = FASTTEXT_EMBED_DIM
-            if key == 'fasttext-wiki':
-                filename = os.path.join(ROOT_DIR, 'data/fasttext/wiki-news-300d-1M.vec')
-            elif key == 'fasttext-wiki-subword':
-                filename = os.path.join(ROOT_DIR, 'data/fasttext/wiki-news-300d-1M-subword.vec')
-            elif key == 'fasttext-crawl':
-                filename = os.path.join(ROOT_DIR, 'data/fasttext/crawl-300d-2M.vec')
-            elif key == 'fasttext-crawl-subword':
-                filename = os.path.join(ROOT_DIR, 'data/fasttext/crawl-300d-2M-subword.vec')
-            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
-        else:
-            print("[Model] Using {} embeddings".format(key))
-            embed_dim = EMBED_DIM
-            model = word2vec.Word2Vec(sentences=tweets_corpus, size=embed_dim)
-            model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
-            word_vectors = model.wv
         return word_vectors, embed_dim
 
     @staticmethod
@@ -170,61 +148,146 @@ class TextDataProvider(object):
             embedded_tweet += [generate_random_embedding(embed_dim) for _ in range(diff)]
         return embedded_tweet
 
-    def fetch_word_embeddings(self, outputs, word_vectors, embed_dim, experiment_flag=2):
+    def fetch_word_embeddings(self, outputs, word_vectors, embed_dim):
         outputs_embed = []
         for i, output in enumerate(outputs):
 
             # process first tweet
-            tweet = output['tokens']
-            embedded_tweet = self.process_tweet(tweet, embed_dim, word_vectors)
+            embedded_tweet = self.process_tweet(output['tokens'], embed_dim, word_vectors)
 
-            if experiment_flag == 2:
+            if self.experiment_flag == 2:
                 #proceses second tweet
                 if output['context_tweet'] is None:
                     for i in range(TWEET_SENTENCE_SIZE):
                         blank_embedding = np.zeros(embed_dim,)
                         embedded_tweet.append(blank_embedding)
                 else:
-                    context_embedding = self.process_tweet(output['context_tweet'], embed_dim, word_vectors)
+                    context_embedding = self.process_tweet(output['context_tokens'], embed_dim, word_vectors)
                     for i in range(TWEET_SENTENCE_SIZE):
                         embedded_tweet.append(context_embedding[i])
-
                 assert len(embedded_tweet) == TWEET_SENTENCE_SIZE*2
+
+            if self.experiment_flag == 3:
+                for i, embed in enumerate(embedded_tweet):
+                    embedded_tweet[i] = np.concatenate((embed, [output['retweet_count'],
+                                                                output['favorite_count']]))
+
+            if self.experiment_flag == 4:
+                for i, embed in enumerate(embedded_tweet):
+                    embedded_tweet[i] = embed * output['retweet_count'] * output['favorite_count']
 
             output['embedding'] = embedded_tweet
             outputs_embed.append(output)
         return outputs_embed
 
+    @staticmethod
+    def generate_tdidf_experiment_3_embeddings(data_list, embeddings, experiment_flag):
+        processed_embeddings = []
+        for i, embed in enumerate(embeddings):
+            embed = np.transpose(np.array(embed))
+            embed = embed.reshape(-1)
+            output = data_list[i]
+            if experiment_flag == 3:
+                processed_embeddings.append(np.concatenate((embed, [output['retweet_count'], output['favorite_count']])))
+            if experiment_flag == 4:
+                processed_embed = embed * output['retweet_count'] * output['favorite_count']
+                processed_embeddings.append(processed_embed)
+        return processed_embeddings
+
     def generate_tdidf_embeddings(self, seed):
         x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(self.outputs, self.labels, seed)
-
-        x_train = convert_to_feature_embeddings(x_train, key='tokens')
-        x_valid = convert_to_feature_embeddings(x_valid, key='tokens')
-        x_test = convert_to_feature_embeddings(x_test, key='tokens')
-
         vectorizer = TfidfVectorizer(use_idf=True, max_features=10000)
+        x_train_embed = vectorizer.fit_transform(convert_to_feature_embeddings(x_train,
+                                                                               key='tokens',
+                                                                               experiment_flag=self.experiment_flag
+                                                                               )).todense()
+        x_valid_embed = vectorizer.transform(convert_to_feature_embeddings(x_valid,
+                                                                           key='tokens',
+                                                                           experiment_flag=self.experiment_flag
+                                                                           )).todense()
+        x_test_embed = vectorizer.transform(convert_to_feature_embeddings(x_test,
+                                                                          key='tokens',
+                                                                          experiment_flag=self.experiment_flag
+                                                                          )).todense()
+        if self.experiment_flag == 3 or self.experiment_flag == 4:
+           x_train_embed = self.generate_tdidf_experiment_3_embeddings(x_train, x_train_embed, self.experiment_flag)
+           x_valid_embed = self.generate_tdidf_experiment_3_embeddings(x_valid, x_valid_embed, self.experiment_flag)
+           x_test_embed = self.generate_tdidf_experiment_3_embeddings(x_train, x_test_embed, self.experiment_flag)
 
-        return {'x_train': vectorizer.fit_transform(x_train).todense(),
+        return {'x_train': x_train_embed,
                 'y_train': y_train,
-                'x_valid': vectorizer.transform(x_valid).todense(),
+                'x_valid': x_valid_embed,
                 'y_valid': y_valid,
-                'x_test': vectorizer.transform(x_test).todense(),
+                'x_test': x_test_embed,
                 'y_test': y_test}
+
+    @staticmethod
+    def generate_bert_embedding_dict():
+        embeddings = {}
+        for i in range(BERT_EMBEDDING_NUM):
+            results = np.load(os.path.join(ROOT_DIR, 'data/bert_embeddings_{}.npz'.format(i)), allow_pickle=True)
+            print("Downloading Bert, Processed {} / {}".format(i+1, BERT_EMBEDDING_NUM))
+            results = results['a']
+            results = results[()]
+            embeddings = {**results, **embeddings}
+        return embeddings
+
+    def generate_bert_embeddings(self, embeddings, data):
+        """
+        :param embeddings: preprocessed bert word embeddings
+        :param data: has all fields, separate fn from gen_word_embeddings
+        :return:
+        """
+        if self.experiment_flag == 1 or self.experiment_flag == 2:
+            return [embeddings[int(output['id'])] for output in data]
+        elif self.experiment_flag == 2:
+            # finding bert embedding for reply tweet
+            data_embed = []
+            for output in data:
+                tweet_embed = embeddings[int(output['id'])]
+                reply_status_id = int(output['in_reply_to_status_id'])
+                final_embed = []
+                if reply_status_id == -1 or reply_status_id not in embeddings:
+                    for i in range(17):
+                        blank_embedding = np.zeros(768, )
+                        final_embed.append(blank_embedding)
+                    final_embed = final_embed + tweet_embed
+                else:
+                    final_embed = final_embed + embeddings[reply_status_id]
+                data_embed.append(final_embed)
+            return data_embed
+        elif self.experiment_flag == 3:
+            data_embed = []
+            for output in data:
+                output_embeddings = embeddings[int(output['id'])]
+                for i, embed in enumerate(output_embeddings):
+                    output_embeddings[i] = np.concatenate((embed, [output['retweet_count'], output['favorite_count']]))
+                data_embed.append(output_embeddings)
+            return data_embed
 
     def generate_word_level_embeddings(self, embedding_key, seed):
         x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(self.outputs, self.labels, seed)
-        word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
+        if embedding_key == 'bert':
+            embeddings = self.generate_bert_embedding_dict()
+            x_train = self.generate_bert_embeddings(embeddings, x_train)
+            x_valid = self.generate_bert_embeddings(embeddings, x_valid)
+            x_test = self.generate_bert_embeddings(embeddings, x_test)
+        else:
+            word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
 
-        # embed inputs
-        x_train_embed = self.fetch_word_embeddings(x_train, word_vectors, embed_dim, self.experiment_flag)
-        x_valid_embed = self.fetch_word_embeddings(x_valid, word_vectors, embed_dim, self.experiment_flag)
-        x_test_embed = self.fetch_word_embeddings(x_test, word_vectors, embed_dim, self.experiment_flag)
-
-        return {'x_train': convert_to_feature_embeddings(x_train_embed),
+            # embed inputs
+            x_train_embed = self.fetch_word_embeddings(x_train, word_vectors, embed_dim)
+            x_valid_embed = self.fetch_word_embeddings(x_valid, word_vectors, embed_dim)
+            x_test_embed = self.fetch_word_embeddings(x_test, word_vectors, embed_dim)
+            x_train = convert_to_feature_embeddings(x_train_embed, self.experiment_flag)
+            x_valid = convert_to_feature_embeddings(x_valid_embed, self.experiment_flag)
+            x_test = convert_to_feature_embeddings(x_test_embed, self.experiment_flag)
+        print("Word embeddings generated")
+        return {'x_train': x_train,
                 'y_train': y_train,
-                'x_valid': convert_to_feature_embeddings(x_valid_embed),
+                'x_valid': x_valid,
                 'y_valid': y_valid,
-                'x_test': convert_to_feature_embeddings(x_test_embed),
+                'x_test': x_test,
                 'y_test': y_test
                 }
 

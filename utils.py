@@ -38,20 +38,36 @@ def generate_random_embedding(embed_dim):
     return np.random.normal(scale=0.6, size=(embed_dim,))
 
 
-def convert_to_feature_embeddings(x_embed, key='embedding'):
+def convert_to_feature_embeddings(x_embed, experiment_flag, key='embedding'):
+    """
+    :param x_embed: dictionary with all params of processed tweets
+    :param key: what params should be kept
+    :param experiment_flag: which type of experiment
+    :return:
+    """
+    print("Experiment flag {}".format(experiment_flag))
     if key == 'tokens': #  for tdidf
-        return [' '.join(x[key]) for x in x_embed]
+        if experiment_flag == 1:
+            return [x['tweet'] for x in x_embed]
+        else:
+            output = []
+            for x in x_embed:
+                if x['context_tweet']:
+                    output.append(x['tweet'] + '\n' + x['context_tweet'])
+                else:
+                    output.append(x['tweet'] + '\n' + ' '.join([' '] * len(x['tweet'])))
+            return output
     return [x[key] for x in x_embed]
 
 
-def process_outputs(outputs, experiment_flag=2):
+def process_outputs(outputs, experiment_flag):
     """
     Cleans text, creates context tweets for reply experiment, and tokenizes
     :param outputs: tweet data / label
     :param experiment_flag: denotes what round of experiments this is, 1) tweet, 2) tweet + context tweet 3) reply net
     :return:
     """
-    replies = np.load(os.path.join(ROOT_DIR, 'data/reply_data.npy'))
+    replies = np.load(os.path.join(ROOT_DIR, 'data/reply_data.npy'), allow_pickle=True)
     replies = replies[()]
 
     outputs_processed = []
@@ -65,11 +81,11 @@ def process_outputs(outputs, experiment_flag=2):
 
         #  tokenize / clean
         output['tokens'] = output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
+        output['tokens'] = output['tokens'].split(' ')
 
         if experiment_flag == 2:
             output['context_tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)).lower() if output['context_tweet'] else None
-
-        output['tokens'] = output['tokens'].split(' ')
+            output['context_tokens'] = output['context_tokens'].split() if output['context_tokens'] else None
         outputs_processed.append(output)
     return outputs_processed
 
@@ -87,14 +103,16 @@ def extract_tweets(label_data, data, experiment_flag):
             error_count += 1
             continue
         output = {}
+        output['id'] = value['id_str']
         output['tweet'] = value['text']
         output['label'] = labels_map[label_data[int(value['id_str'])]]
         labels.append(output['label'])
-        output['retweet_count'] = value['retweet_count']
         output['retweeted'] = int(value['retweeted'])
         output['in_reply_to_status_id'] = value['in_reply_to_status_id'] if value[
                                                                                 'in_reply_to_status_id'] is not None else -1
-        output['favorite_count'] = value['favorite_count']
+
+        output['retweet_count'] = 0 if value['retweet_count'] == 0 else np.log(value['retweet_count'])
+        output['favorite_count'] = 0 if value['favorite_count'] == 0 else np.log(value['favorite_count'])
         output['label_string'] = label_data[int(value['id_str'])]
         outputs.append(output)
     outputs_processed = process_outputs(outputs, experiment_flag)

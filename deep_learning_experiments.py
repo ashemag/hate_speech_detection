@@ -68,19 +68,19 @@ def wrap_data(batch_size, seed, x_train, y_train, x_valid, y_valid, x_test, y_te
                                                    batch_size=batch_size,
                                                    num_workers=2,
                                                    sampler=ImbalancedDatasetSampler(train_set))
-
+    print("Wrapped train set")
     valid_set = DataProvider(inputs=x_valid, targets=y_valid, seed=seed)
     valid_data_local = torch.utils.data.DataLoader(valid_set,
                                                    batch_size=batch_size,
                                                    num_workers=2,
                                                    shuffle=False)
-
+    print("Wrapped valid set")
     test_set = DataProvider(inputs=x_test, targets=y_test, seed=seed)
     test_data_local = torch.utils.data.DataLoader(test_set,
                                                   batch_size=batch_size,
                                                   num_workers=2,
                                                   shuffle=False)
-
+    print("Wrapped test set")
     return train_data_local, valid_data_local, test_data_local
 
 
@@ -133,8 +133,12 @@ if __name__ == "__main__":
     args = get_args()
     device = generate_device(args.seed)
     data = extract_data(args.embedding_key, args.embedding_level, args.seed, args.experiment_flag)
+    print("Wrapping data")
     train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
-    input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
+    print("Fetching model")
+
+    input_shape = tuple([args.batch_size] + [34] + [np.array(data['x_train']).shape[-1]])
+    print("=== input shape {} ===".format(input_shape))
     model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
 
     # OUTPUT
@@ -163,6 +167,7 @@ if __name__ == "__main__":
         valid_data=valid_data,
         test_data=test_data,
         scheduler=scheduler,
+        experiment_flag=args.experiment_flag,
     )
 
     experiment_metrics, test_metrics = experiment.run_experiment()  # run experiment and return experiment metrics

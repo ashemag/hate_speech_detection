@@ -26,7 +26,7 @@ class CNN(nn.Module):
         self.use_bias = use_bias
         self.num_layers = num_layers
         self.drop = nn.Dropout(p=dropout, inplace=False)
-        self.logit_linear_layer = None
+        self.fc_layer = None
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
 
@@ -75,11 +75,11 @@ class CNN(nn.Module):
         out = F.max_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
 
-        self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
-                                            out_features=self.num_output_classes,
-                                            bias=self.use_bias)
+        self.fc_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
+                                  out_features=self.num_output_classes,
+                                  bias=self.use_bias)
 
-        out = self.logit_linear_layer(out)  # apply linear layer on flattened inputs
+        out = self.fc_layer(out)  # apply linear layer on flattened inputs
         print("Block is built, output volume is", out.shape)
         return out
 
@@ -103,7 +103,6 @@ class CNN(nn.Module):
         out = torch.cat(context_list, dim=1)
         out = F.max_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
-        out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
 
         return out
 
@@ -117,7 +116,7 @@ class CNN(nn.Module):
             except:
                 pass
 
-        self.logit_linear_layer.reset_parameters()
+        self.fc_layer.reset_parameters()
 
 
 def word_cnn(input_shape, dropout=.5):
