@@ -21,11 +21,11 @@ def process_csv(filename = os.path.join(ROOT_DIR,'results/experiments.csv')):
     return data
 
 data = process_csv()
-models = ['logistic_regression', 'MLP', 'CNN', 'LSTM', 'DENSENET']
+models = ['MLP', 'CNN', 'LSTM', 'DENSENET']
 metrics = ['test_f_score_hateful', 'test_f_score_abusive', 'test_f_score', 'test_precision', 'test_recall']
 embeddings = ['NA_tdidf', 'twitter_word', 'bert_word']
 output_str = ''
-EXPERIMENT_KEY = 'baseline'
+EXPERIMENT_KEY = 'phase_3'
 for i, model in enumerate(models):
     for j, embed in enumerate(embeddings):
 

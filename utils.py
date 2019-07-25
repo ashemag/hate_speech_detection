@@ -24,6 +24,17 @@ def split_data(x, y, seed, verbose=True):
     return x_train, y_train, x_valid, y_valid, x_test, y_test
 
 
+def aggregate(num_files, file_names):
+    aggregate_data = {}
+    for i in range(num_files):
+        path_name = os.path.join(ROOT_DIR, 'data/{}_{}.npz'.format(file_names, i))
+        results = np.load(path_name, allow_pickle=True)
+        print("Downloading {}, Processed {} / {}".format(path_name, i+1, num_files))
+        results = results['a']
+        results = results[()]
+        aggregate_data = {**results, **aggregate_data}
+    return aggregate_data
+
 def extract_labels(filename):
     print("=== Extracting annotations ===")
     data = {}
@@ -38,40 +49,33 @@ def generate_random_embedding(embed_dim):
     return np.random.normal(scale=0.6, size=(embed_dim,))
 
 
-def convert_to_feature_embeddings(x_embed, experiment_flag, key='embedding'):
-    """
-    :param x_embed: dictionary with all params of processed tweets
-    :param key: what params should be kept
-    :param experiment_flag: which type of experiment
-    :return:
-    """
-    print("Experiment flag {}".format(experiment_flag))
-    if key == 'tokens': #  for tdidf
-        if experiment_flag == 1:
-            return [x['tweet'] for x in x_embed]
-        else:
-            output = []
-            for x in x_embed:
-                if x['context_tweet']:
-                    output.append(x['tweet'] + '\n' + x['context_tweet'])
-                else:
-                    output.append(x['tweet'] + '\n' + ' '.join([' '] * len(x['tweet'])))
-            return output
-    return [x[key] for x in x_embed]
-
-
-def process_outputs(outputs, experiment_flag):
-    """
-    Cleans text, creates context tweets for reply experiment, and tokenizes
-    :param outputs: tweet data / label
-    :param experiment_flag: denotes what round of experiments this is, 1) tweet, 2) tweet + context tweet 3) reply net
-    :return:
-    """
+def extract_tweets(label_data, data, experiment_flag):
+    print("=== Extracting tweets from JSON ===")
+    labels = []
+    labels_map = {'hateful': 0, 'abusive': 1, 'normal': 2, 'spam': 3}
+    error_count = 0
+    outputs = {}
     replies = np.load(os.path.join(ROOT_DIR, 'data/reply_data.npy'), allow_pickle=True)
     replies = replies[()]
+    for key, value in data.items():
 
-    outputs_processed = []
-    for output in outputs:
+        if int(value['id_str']) not in label_data:
+            error_count += 1
+            continue
+
+        output = {}
+        output['id'] = value['id_str']
+        output['tweet'] = value['text']
+        output['label'] = labels_map[label_data[int(value['id_str'])]]
+        labels.append(output['label'])
+        output['retweeted'] = int(value['retweeted'])
+        output['in_reply_to_status_id'] = value['in_reply_to_status_id'] if value[
+                                                                      'in_reply_to_status_id'] is not None else -1
+        output['user_id'] = value['user']['id']
+        output['retweet_count'] = 0 if value['retweet_count'] == 0 else np.log(value['retweet_count'])
+        output['favorite_count'] = 0 if value['favorite_count'] == 0 else np.log(value['favorite_count'])
+        output['label_string'] = label_data[int(value['id_str'])]
+
         # add context tweet
         status_id = str(output['in_reply_to_status_id'])
         if status_id in replies:
@@ -84,39 +88,12 @@ def process_outputs(outputs, experiment_flag):
         output['tokens'] = output['tokens'].split(' ')
 
         if experiment_flag == 2:
-            output['context_tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)).lower() if output['context_tweet'] else None
+            output['context_tokens'] = output['context_tweet'].translate(
+                str.maketrans('', '', string.punctuation)).lower() if output['context_tweet'] else None
             output['context_tokens'] = output['context_tokens'].split() if output['context_tokens'] else None
-        outputs_processed.append(output)
-    return outputs_processed
 
-
-def extract_tweets(label_data, data, experiment_flag):
-    print("=== Extracting tweets from JSON ===")
-    labels = []
-    labels_map = {'hateful': 0, 'abusive': 1, 'normal': 2, 'spam': 3}
-    error_count = 0
-    outputs = []
-
-    for key, value in data.items():
-
-        if int(value['id_str']) not in label_data:
-            error_count += 1
-            continue
-        output = {}
-        output['id'] = value['id_str']
-        output['tweet'] = value['text']
-        output['label'] = labels_map[label_data[int(value['id_str'])]]
-        labels.append(output['label'])
-        output['retweeted'] = int(value['retweeted'])
-        output['in_reply_to_status_id'] = value['in_reply_to_status_id'] if value[
-                                                                                'in_reply_to_status_id'] is not None else -1
-
-        output['retweet_count'] = 0 if value['retweet_count'] == 0 else np.log(value['retweet_count'])
-        output['favorite_count'] = 0 if value['favorite_count'] == 0 else np.log(value['favorite_count'])
-        output['label_string'] = label_data[int(value['id_str'])]
-        outputs.append(output)
-    outputs_processed = process_outputs(outputs, experiment_flag)
-    return outputs_processed, labels
+        outputs[output['id']] = output
+    return outputs, labels
 
 
 def prepare_output_file(filename, output=None, file_action_key='a+', aggregate=False):

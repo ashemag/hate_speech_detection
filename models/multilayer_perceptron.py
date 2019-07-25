@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 class MLP(nn.Module):
-    def __init__(self, input_shape, num_output_classes, num_layers, use_bias=False):
+    def __init__(self, num_output_classes, num_layers, use_bias=False):
         """
         Initializes a convolutional network module object.
         :param input_shape: The shape of the inputs going in to the network.
@@ -17,7 +17,6 @@ class MLP(nn.Module):
         """
         super(MLP, self).__init__()
         # set up class attributes useful in building the network and inference
-        self.input_shape = input_shape
         self.num_output_classes = num_output_classes
         self.use_bias = use_bias
         self.num_layers = num_layers
@@ -25,32 +24,36 @@ class MLP(nn.Module):
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
 
-        # build the network
-        self.build_module()
-
-    def build_module(self):
+    def build_layers(self, input_shape, layer_key='first'):
         """
         Builds network whilst automatically inferring shapes of layers.
         """
-        x = torch.zeros((self.input_shape))  # create dummy inputs to be used to infer shapes of layers
+        x = torch.zeros(input_shape)  # create dummy inputs to be used to infer shapes of layers
         out = x
-        print("Building basic block of network using input shape {}".format(out.shape))
         if len(out.shape) > 2:
-            out = out.permute([0, 2, 1])
             out = F.max_pool1d(out, out.shape[-1])
             out = out.view(out.shape[0], -1)
+        print("Building basic block of network using input shape {} and layer key {}".format(out.shape, layer_key))
 
         for i in range(self.num_layers):
-            if i > 0:
-                out = F.leaky_relu(out)
-            self.layer_dict['linear_{}'.format(i)] = nn.Linear(in_features=out.shape[1],  # add a linear layer
-                                                               out_features=self.num_output_classes,
-                                                               bias=self.use_bias)
-            out = self.layer_dict['linear_{}'.format(i)](out)
-        print("Block is built, output volume is", out.shape)
-        return out
+            self.layer_dict['linear_{}_{}'.format(i, layer_key)] = nn.Linear(in_features=out.shape[1],
+                                                                             # add a linear layer
+                                                                             out_features=out.shape[1],
+                                                                             bias=self.use_bias)
+            out = self.layer_dict['linear_{}_{}'.format(i, layer_key)](out)
+            out = F.leaky_relu(out)
 
-    def forward(self, x):
+        if len(out.shape) == 2:
+            out_shape = out.reshape(out.shape[0], out.shape[1], 1).shape
+
+        self.layer_dict['fc_layer_{}'.format(layer_key)] = nn.Linear(in_features=out.shape[1],  # add a linear layer
+                                                                     out_features=self.num_output_classes,
+                                                                     bias=self.use_bias)
+        out = self.layer_dict['fc_layer_{}'.format(layer_key)](out)
+        print("Block is built, output volume is {}".format(out.shape))
+        return out_shape
+
+    def forward(self, x, layer_key='first', flatten_flag=True):
         """
         Forward propages the network given an input batch
         :param x: Inputs x (b, c, h, w)
@@ -58,14 +61,16 @@ class MLP(nn.Module):
         """
         out = x
         if len(out.shape) > 2:
-            out = out.permute([0, 2, 1])
             out = F.max_pool1d(out, out.shape[-1])
             out = out.view(out.shape[0], -1)
 
         for i in range(self.num_layers):
-            if i > 0:
-                out = F.leaky_relu(out)
-            out = self.layer_dict['linear_{}'.format(i)](out)
+            out = self.layer_dict['linear_{}_{}'.format(i, layer_key)](out)
+            out = F.leaky_relu(out)
+
+        if not flatten_flag:
+            out = out.reshape(out.shape[0], out.shape[1], 1)
+
         return out
 
     def reset_parameters(self):
@@ -79,7 +84,6 @@ class MLP(nn.Module):
                 pass
 
 
-def multi_layer_perceptron(input_shape):
+def multi_layer_perceptron():
     return MLP(num_output_classes=4,
-               num_layers=3,
-               input_shape=input_shape)
+               num_layers=3)

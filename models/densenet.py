@@ -35,38 +35,58 @@ class Transition(nn.Module):
 
 
 class DenseNet(Network):
-    def __init__(self, input_shape, block, nblocks, growth_rate=12, reduction=0.5, num_classes=4):
+    def __init__(self, block, nblocks, growth_rate=12, reduction=0.5, num_output_classes=4):
         super(DenseNet, self).__init__()
+
+        self.growth_rate = growth_rate
+        self.num_output_classes = num_output_classes
+        self.nblocks = nblocks
+        self.reduction=reduction
+        self.block=block
+        self.layer_dict = nn.ModuleDict()
+
+    def build_layers(self, input_shape, layer_key='first'):
         x = torch.zeros(input_shape)
         out = self.process(x)
-        self.growth_rate = growth_rate
 
-        num_planes = 2*growth_rate
-        self.conv1 = nn.Conv1d(out.shape[1], num_planes, kernel_size=3, padding=1, bias=False)
+        num_planes = 2 * self.growth_rate
+        self.layer_dict['conv_1_{}'.format(layer_key)] = nn.Conv1d(out.shape[1], num_planes, kernel_size=3, padding=1, bias=False)
 
-        self.dense1 = self._make_dense_layers(block, num_planes, nblocks[0])
-        num_planes += nblocks[0]*growth_rate
-        out_planes = int(math.floor(num_planes*reduction))
-        self.trans1 = Transition(num_planes, out_planes)
+        self.layer_dict['dense_1_{}'.format(layer_key)] = self._make_dense_layers(self.block, num_planes, self.nblocks[0])
+        num_planes += self.nblocks[0] * self.growth_rate
+        out_planes = int(math.floor(num_planes * self.reduction))
+        self.layer_dict['trans_1_{}'.format(layer_key)] = Transition(num_planes, out_planes)
         num_planes = out_planes
 
-        self.dense2 = self._make_dense_layers(block, num_planes, nblocks[1])
-        num_planes += nblocks[1]*growth_rate
-        out_planes = int(math.floor(num_planes*reduction))
-        self.trans2 = Transition(num_planes, out_planes)
+        self.layer_dict['dense_2_{}'.format(layer_key)] = self._make_dense_layers(self.block, num_planes, self.nblocks[1])
+        num_planes += self.nblocks[1] * self.growth_rate
+        out_planes = int(math.floor(num_planes * self.reduction))
+        self.layer_dict['trans_2_{}'.format(layer_key)] = Transition(num_planes, out_planes)
         num_planes = out_planes
 
-        self.dense3 = self._make_dense_layers(block, num_planes, nblocks[2])
-        num_planes += nblocks[2]*growth_rate
-        out_planes = int(math.floor(num_planes*reduction))
-        self.trans3 = Transition(num_planes, out_planes)
+        self.layer_dict['dense_3_{}'.format(layer_key)] = self._make_dense_layers(self.block, num_planes, self.nblocks[2])
+        num_planes += self.nblocks[2] * self.growth_rate
+        out_planes = int(math.floor(num_planes * self.reduction))
+        self.layer_dict['trans_3_{}'.format(layer_key)] = Transition(num_planes, out_planes)
         num_planes = out_planes
 
-        self.dense4 = self._make_dense_layers(block, num_planes, nblocks[3])
-        num_planes += nblocks[3]*growth_rate
+        self.layer_dict['dense_4_{}'.format(layer_key)] = self._make_dense_layers(self.block, num_planes, self.nblocks[3])
+        num_planes += self.nblocks[3] * self.growth_rate
 
-        self.bn = nn.BatchNorm1d(num_planes)
-        self.linear = nn.Linear(num_planes, num_classes)
+        self.layer_dict['bn_{}'.format(layer_key)] = nn.BatchNorm1d(num_planes)
+        self.layer_dict['fc_layer_{}'.format(layer_key)] = nn.Linear(num_planes, self.num_output_classes)
+
+        #forward pass
+        out = self.layer_dict['conv_1_{}'.format(layer_key)](out)
+        out = self.layer_dict['trans_1_{}'.format(layer_key)](self.layer_dict['dense_1_{}'.format(layer_key)](out))
+        out = self.layer_dict['trans_2_{}'.format(layer_key)](self.layer_dict['dense_2_{}'.format(layer_key)](out))
+        out = self.layer_dict['trans_3_{}'.format(layer_key)](self.layer_dict['dense_3_{}'.format(layer_key)](out))
+        out = self.layer_dict['dense_4_{}'.format(layer_key)](out)
+        out = F.avg_pool1d(F.relu(self.layer_dict['bn_{}'.format(layer_key)](out)), out.shape[-1])
+
+        out = out.permute([0, 2, 1])
+
+        return out.shape
 
     def _make_dense_layers(self, block, in_planes, nblock):
         layers = []
@@ -83,16 +103,18 @@ class DenseNet(Network):
             out = out.reshape(out.shape[0], out.shape[1], 1)
         return out
 
-    def forward(self, x):
+    def forward(self, x, layer_key='first', flatten_flag=True):
         out = self.process(x)
-        out = self.conv1(out)
-        out = self.trans1(self.dense1(out))
-        out = self.trans2(self.dense2(out))
-        out = self.trans3(self.dense3(out))
-        out = self.dense4(out)
-        out = F.avg_pool1d(F.relu(self.bn(out)), out.shape[-1])
-        out = out.view(out.size(0), -1)
-        out = self.linear(out)
+        out = self.layer_dict['conv_1_{}'.format(layer_key)](out)
+        out = self.layer_dict['trans_1_{}'.format(layer_key)](self.layer_dict['dense_1_{}'.format(layer_key)](out))
+        out = self.layer_dict['trans_2_{}'.format(layer_key)](self.layer_dict['dense_2_{}'.format(layer_key)](out))
+        out = self.layer_dict['trans_3_{}'.format(layer_key)](self.layer_dict['dense_3_{}'.format(layer_key)](out))
+        out = self.layer_dict['dense_4_{}'.format(layer_key)](out)
+        out = F.avg_pool1d(F.relu(self.layer_dict['bn_{}'.format(layer_key)](out)), out.shape[-1])
+        if flatten_flag:
+            out = out.view(out.size(0), -1)
+        else:
+            out = out.permute([0, 2, 1])
         return out
 
     def reset_parameters(self):
@@ -111,5 +133,5 @@ class DenseNet(Network):
 #     return DenseNet(Bottleneck, [6,12,36,24], growth_rate=48)
 
 
-def densenet(input_shape):
-    return DenseNet(input_shape, Bottleneck, [4,4,4,4], growth_rate=12)
+def densenet():
+    return DenseNet(Bottleneck, [4,4,4,4], growth_rate=12)

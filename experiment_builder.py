@@ -7,7 +7,10 @@ import os
 import numpy as np
 import time
 from sklearn.metrics import f1_score, precision_score, recall_score
-from utils import prepare_output_file
+from torch import optim
+import torch.nn.functional as F
+
+from utils import prepare_output_file, aggregate
 from globals import TWEET_SENTENCE_SIZE
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
@@ -15,7 +18,7 @@ DEBUG = False
 
 
 class ExperimentBuilder(nn.Module):
-    def __init__(self, network_model, device, hyper_params, train_data, valid_data, test_data, experiment_flag, scheduler=None):
+    def __init__(self, network_model, device, hyper_params, data_map, train_data, valid_data, test_data, experiment_flag):
         """
         Initializes an ExperimentBuilder object. Such an object takes care of running training and evaluation of a deep net
         on a given dataset. It also takes care of saving per epoch models and automatically inferring the best val model
@@ -28,19 +31,32 @@ class ExperimentBuilder(nn.Module):
         self.model.reset_parameters()
         self.device = device
         self.seed = hyper_params['seed']
-        self.scheduler = scheduler
+        self.num_epochs = hyper_params['num_epochs']
+        self.starting_epoch = 0
+        self.state = dict()
+
+
+        # re-initialize network parameters
+        self.data_map = data_map
+        self.train_data_raw = train_data
+        self.valid_data_raw = valid_data
+        self.test_data_raw = test_data
+        self.train_data = []
+        self.valid_data = []
+        self.test_data = []
+
+        # build extra layer of model
+        input_shape = hyper_params['input_shape']
+        self.preprocess_data()
+        self.criterion = nn.CrossEntropyLoss().to(self.device)  # send the loss computation to the GPU
+        self.optimizer = torch.optim.Adam(self.model.parameters(), weight_decay=1e-4)
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.num_epochs, eta_min=1e-4)
 
         if torch.cuda.device_count() > 1:
             self.model.to(self.device)
             self.model = nn.DataParallel(module=self.model)
         else:
             self.model.to(self.device)  # sends the model from the cpu to the gpu
-
-        # re-initialize network parameters
-        self.train_data = train_data
-        self.valid_data = valid_data
-        self.test_data = test_data
-        self.optimizer = hyper_params['optimizer']
 
         # Generate the directory names
         self.experiment_folder = hyper_params['results_dir']
@@ -55,11 +71,6 @@ class ExperimentBuilder(nn.Module):
 
         if not os.path.exists(self.experiment_saved_models):
             os.makedirs(self.experiment_saved_models)  # create the experiment saved models directory
-
-        self.num_epochs = hyper_params['num_epochs']
-        self.criterion = nn.CrossEntropyLoss().to(self.device)  # send the loss computation to the GPU
-        self.starting_epoch = 0
-        self.state = dict()
 
         # Comet visualizations
         if not DEBUG:
@@ -78,20 +89,21 @@ class ExperimentBuilder(nn.Module):
         return total_num_params
 
     def forward_pass_helper(self, x):
-        if self.experiment_flag == 2 and len(x.shape) == 3: # not for tdidf
-            # separate embeddings
-            original_tweet_embed = x[:, 0:TWEET_SENTENCE_SIZE, :]
-            context_tweet_embed = x[:, TWEET_SENTENCE_SIZE:, :]
-            out_tweet = self.model.forward(original_tweet_embed)
-            out_context_tweet = self.model.forward(context_tweet_embed)
-            out = torch.cat((out_tweet, out_context_tweet), 1)
-            fc_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
-                                 out_features=self.model.num_output_classes,
-                                 bias=self.model.use_bias)
-            return fc_layer(out)
+        tweet_input, feature_input = x[0], x[1]
+        if self.experiment_flag == 2 or self.experiment_flag == 4:
 
-        out = self.model.forward(x)  # forward the data in the model
-        return self.model.fc_layer(out)
+            #  tweet level processing
+            feature_input = feature_input.to(self.device)
+            tweet_input = tweet_input.to(self.device)
+            feature_out = self.model.forward(feature_input, layer_key='feature', flatten_flag=True)
+            tweet_out = self.model.forward(tweet_input, layer_key='tweet', flatten_flag=True)
+            out = torch.cat((tweet_out.cpu(), feature_out.cpu()), 1).to(self.device)
+            return self.model.layer_dict['fc_layer'](out)
+
+        else: #experiments 1 & 3
+            tweet_input = tweet_input.to(self.device)
+            out = self.model.forward(tweet_input, flatten_flag=True, layer_key='tweet')  # forward the data in the model
+            return self.model.layer_dict['fc_layer'](out)
 
     def run_train_iter(self, x, y, stats, experiment_key='train'):
         """
@@ -103,16 +115,15 @@ class ExperimentBuilder(nn.Module):
         # sets model to training mode
         # (in case batch normalization or other methods have different procedures for training and evaluation)
         self.train()
-        x = x.float()
-        x = x.to(self.device)
-        y = y.to(self.device)
         self.optimizer.zero_grad()  # set all weight grads from previous training iters to 0
+        y = y.to(self.device)
 
         out = self.forward_pass_helper(x)  # forward the data in the model
 
         loss = self.criterion(out, y)
         loss.backward()  # backpropagate to compute gradients for current iter loss
         self.optimizer.step()  # update network parameters
+
         _, predicted = torch.max(out.data, 1)  # get argmax of predictions
         accuracy = np.mean(list(predicted.eq(y.data).cpu()))  # compute accuracy
         stats['{}_acc'.format(experiment_key)].append(accuracy)
@@ -126,21 +137,18 @@ class ExperimentBuilder(nn.Module):
         :param y: The targets for the model. A numpy array of shape batch_size, num_classes
         :return: the loss and accuracy for this batch
         """
-        with torch.no_grad():
-            self.eval()  # sets the system to validation mode
-            x = x.float()
-            x = x.to(self.device)
-            y = y.to(self.device)
+        self.eval()  # sets the system to validation mode
+        y = y.to(self.device)
 
-            out = self.forward_pass_helper(x)
+        out = self.forward_pass_helper(x)
+        loss = self.criterion(out, y)
 
-            loss = self.criterion(out, y)
-            _, predicted = torch.max(out.data, 1)  # get argmax of predictions
-            accuracy = np.mean(list(predicted.eq(y.data).cpu()))
+        _, predicted = torch.max(out.data, 1)  # get argmax of predictions
+        accuracy = np.mean(list(predicted.eq(y.data).cpu()))
 
-            stats['{}_acc'.format(experiment_key)].append(accuracy)  # compute accuracy
-            stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
-            self.compute_f_metrics(stats, y, predicted, experiment_key)
+        stats['{}_acc'.format(experiment_key)].append(accuracy)  # compute accuracy
+        stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
+        self.compute_f_metrics(stats, y, predicted, experiment_key)
 
     def save_model(self, model_save_dir, model_save_name, model_idx):
         """
@@ -230,7 +238,7 @@ class ExperimentBuilder(nn.Module):
             stats[type_key + '_recall_' + LABEL_MAPPING[i]].append(recall[i])
 
     def save_best_performing_model(self, epoch_stats, epoch_idx):
-        criteria = epoch_stats['valid_f_score_abusive'] + epoch_stats['valid_f_score_hateful']
+        criteria = epoch_stats['valid_f_score_hateful']
         if criteria > self.best_val_model_criteria:  # if current epoch's mean val acc is greater than the saved best val acc then
             self.best_val_model_criteria = criteria  # set the best val model acc to be current epoch's val accuracy
             self.best_val_model_idx = epoch_idx  # set the experiment-wise best val idx to be the current epoch's idx
@@ -244,7 +252,57 @@ class ExperimentBuilder(nn.Module):
         epoch_elapsed_time = "{:.4f}".format(epoch_elapsed_time)
         print("\n===Epoch {}===\n{}===Elapsed time: {} mins===".format(index, out_string, epoch_elapsed_time))
 
-    def run_experiment(self, round_param=4):
+    def extract_sample_data(self, sample_ids):
+        embedded_tweets = []
+        embedded_context_tweets = []
+        embedded_topic_words = []
+        for _id in sample_ids:
+            embedded_tweet = self.data_map[_id]['embedded_tweet']
+            if self.experiment_flag == 2:
+                embedded_context_tweets.append(torch.Tensor(self.data_map[_id]['embedded_context_tweet']))
+            if self.experiment_flag == 3:
+                retweet_count, favorite_count = self.data_map[_id]['retweet_count'], self.data_map[_id]['favorite_count']
+                features = torch.Tensor([[retweet_count, favorite_count] for _ in range(embedded_tweet.shape[0])])
+                embedded_tweet = np.concatenate((embedded_tweet, features), -1)
+            if self.experiment_flag == 4:
+                embedded_topic_words.append(self.data_map[_id]['embedded_topic_words'])
+                embedded_tweet = self.data_map[_id]['embedded_tweet_perplexity_cohesion']
+
+            # append main tweet
+            embedded_tweets.append(embedded_tweet)
+        if self.experiment_flag == 2:
+            return torch.Tensor(embedded_tweets).float(), torch.Tensor(embedded_context_tweets).float()
+        elif self.experiment_flag == 1: #experiments 1 and 3
+            return torch.Tensor(embedded_tweets).float(), torch.Tensor(embedded_tweets).float()
+        elif self.experiment_flag == 4:
+            return torch.Tensor(embedded_tweets).float(), torch.Tensor(embedded_topic_words).float()
+
+    def build_model(self, data_sample):
+        # build model
+        embedded_tweet, features_tweet = data_sample  # first element, tuple, first value in tuple
+
+        _ = self.model.build_layers(features_tweet.shape, 'feature')
+        _ = self.model.build_layers(embedded_tweet.shape, 'tweet')
+
+        features_tweet_out = self.model.forward(torch.zeros(features_tweet.shape), layer_key='feature')
+        embedded_tweet_out = self.model.forward(torch.zeros(embedded_tweet.shape), layer_key='tweet')
+
+        out = torch.cat((embedded_tweet_out, features_tweet_out), 1)
+        self.model.build_fc_layer(out.shape)
+
+    def preprocess_data(self):
+        print("Preprocessing train data")
+        self.train_data = [(self.extract_sample_data(x), y) for x, y in self.train_data_raw]
+
+        self.build_model(self.train_data[0][0])
+
+        print("Preprocessing valid data")
+        self.valid_data = [(self.extract_sample_data(x), y) for x, y in self.valid_data_raw]
+
+        print("Preprocessing test data")
+        self.test_data = [(self.extract_sample_data(x), y) for x, y in self.test_data_raw]
+
+    def run_experiment(self):
         """
         Runs experiment train and evaluation iterations, saving the model and best val model and val model accuracy after each epoch
         :return: The summary current_epoch_losses from starting epoch to total_epochs.
@@ -254,22 +312,26 @@ class ExperimentBuilder(nn.Module):
             epoch_start_time = time.time()
             epoch_stats = defaultdict(list)
             with tqdm.tqdm(total=len(self.train_data)) as pbar_train:  # create a progress bar for training
-                for idx, (x, y) in enumerate(self.train_data):  # get data batches
+                for x, y in self.train_data:  # get data batches
                     self.run_train_iter(x=x, y=y, stats=epoch_stats)  # take a training iter step
                     pbar_train.update(1)
                     pbar_train.set_description(
-                        "{} Epoch {}: loss: {:.4f}, accuracy: {:.4f}".format('Train', epoch_idx,
-                                                                             epoch_stats['train_loss'][-1],
-                                                                             epoch_stats['train_acc'][-1]))
+                        "{} Epoch {}: f-score-hateful: {:.4f}, accuracy: {:.4f}".format('Train', epoch_idx,
+                                                                                        np.mean(epoch_stats[
+                                                                                                    'train_f_score_hateful']),
+                                                                                        np.mean(
+                                                                                            epoch_stats['train_acc'])))
 
             with tqdm.tqdm(total=len(self.valid_data)) as pbar_val:  # create a progress bar for validation
                 for x, y in self.valid_data:  # get data batches
                     self.run_evaluation_iter(x=x, y=y, stats=epoch_stats)  # run a validation iter
                     pbar_val.update(1)  # add 1 step to the progress bar
                     pbar_val.set_description(
-                        "{} Epoch {}: loss: {:.4f}, accuracy: {:.4f}".format('Valid', epoch_idx,
-                                                                             epoch_stats['valid_loss'][-1],
-                                                                             epoch_stats['valid_acc'][-1]))
+                        "{} Epoch {}: f-score-hateful: {:.4f}, accuracy: {:.4f}".format('Valid', epoch_idx,
+                                                                                        np.mean(epoch_stats[
+                                                                                                    'valid_f_score_hateful']),
+                                                                                        np.mean(
+                                                                                            epoch_stats['valid_acc'])))
 
             # learning rate
             if self.scheduler is not None:
@@ -308,8 +370,8 @@ class ExperimentBuilder(nn.Module):
             for x, y in self.test_data:  # sample batch
                 self.run_evaluation_iter(x=x, y=y, stats=test_stats, experiment_key='test')
                 pbar_test.update(1)  # update progress bar status
-                pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(test_stats['test_loss'][-1],
-                                                                                  test_stats['test_acc'][-1]))
+                pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(np.mean(test_stats['test_loss']),
+                                                                                  np.mean(test_stats['test_acc'])))
         # save to test stats
         for key, value in test_stats.items():
             test_stats[key] = np.mean(value)

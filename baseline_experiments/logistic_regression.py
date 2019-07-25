@@ -63,7 +63,7 @@ def populate_missing_params(output):
             output['{}_{}'.format(type_key, item)] = '-'
 
 
-def output_to_csv(output, file_action_key='a+', experiment_name='logistic_regression_cv_baseline'):
+def output_to_csv(output, file_action_key='a+', experiment_name='test'):
     """
     Output results to .csv
     """
@@ -96,27 +96,49 @@ def process_word_embeddings(data):
 Experiments 
 
 """
+import torch
+
+"""
+Experiments 
+
+"""
 experiment_seeds = [26, 27, 28]
 for i, seed in enumerate(experiment_seeds):
     print("=== Experiment with seed {} running ===".format(seed))
-    embedding_key = 'bert'
-    experiment_key = 1
-    data = TextDataProvider(path_data, path_labels, experiment_key).generate_word_level_embeddings(embedding_key, seed)
-    data_copy = process_word_embeddings(data)
-    # data_copy = TextDataProvider(path_data, path_labels, 1).generate_tdidf_embeddings(seed)
+    data_copy, data_map = TextDataProvider(path_data, path_labels, 1).generate_word_level_embeddings('bert', seed)
+
+    #     data_copy, data_map = TextDataProvider(path_data, path_labels, 1).generate_tdidf_embeddings(seed)
+
+    #     ##
+    x_train = [data_map[key]['embedded_tweet'] for key in data_copy['x_train']]
+    x_valid = [data_map[key]['embedded_tweet'] for key in data_copy['x_valid']]
+    x_test = [data_map[key]['embedded_tweet'] for key in data_copy['x_test']]
+    #     ##
+
+    x_train = torch.Tensor(x_train)
+    x_train = x_train.view(x_train.shape[0], -1)
+
+    x_valid = torch.Tensor(x_valid)
+    x_valid = x_valid.view(x_valid.shape[0], -1)
+
+    x_test = torch.Tensor(x_test)
+    x_test = x_test.view(x_test.shape[0], -1)
+
     print("=== Model Started Training ===")
     start = time.time()
     model = LogisticRegression(random_state=seed, solver='lbfgs', multi_class='multinomial')
-    model = model.fit(data_copy['x_train'], data_copy['y_train'])
+    model = model.fit(x_train, data_copy['y_train'])
 
     print("=== Model Completed Training ({:2f} min) ===".format((time.time() - start) / 60))
 
     output = {}
     output['seed'] = seed
+    type_key = ['train', 'valid', 'test']
     populate_missing_params(output)  # so that we can add to same sheet as Neural Nets
-    for type_key in ['train', 'valid', 'test']:
-        print("=== Processing {} set ===".format(type_key))
-        results(model, type_key, data_copy['x_{}'.format(type_key)], data_copy['y_{}'.format(type_key)], output)
+    for i, (x, y) in enumerate(
+            [(x_train, data_copy['y_train']), (x_valid, data_copy['y_valid']), (x_test, data_copy['y_test'])]):
+        results(model, type_key[i], x, y, output)
         print('\n')
     file_action_key = 'w' if i == 0 else 'a+'
-    output_to_csv(output, file_action_key, experiment_name='logistic_regression_phase_{}_{}'.format(experiment_key, embedding_key))
+    print(output)
+    output_to_csv(output, file_action_key, experiment_name='logistic_regression_baseline_bert')
