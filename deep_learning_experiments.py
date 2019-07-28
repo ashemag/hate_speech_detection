@@ -49,12 +49,12 @@ def get_args():
 def extract_data(embedding_key, embedding_level, seed, experiment_flag):
     path_data = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_DATA'])
     path_labels = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_LABELS'])
-    data_provider = TextDataProvider(path_data, path_labels, experiment_flag)
+    data_provider = TextDataProvider(path_data, path_labels, experiment_flag, embedding_key)
 
     if embedding_level == 'word':
-        return data_provider.generate_word_level_embeddings(embedding_key, seed)
+        return data_provider, data_provider.generate_word_level_embeddings(seed)
     elif embedding_level == 'tdidf':
-        return data_provider.generate_tdidf_embeddings(seed)
+        return data_provider, data_provider.generate_tdidf_embeddings(seed)
 
 
 def wrap_data(batch_size, seed, data_local):
@@ -117,7 +117,7 @@ def generate_device(seed):
 if __name__ == "__main__":
     args = get_args()
     device = generate_device(args.seed)
-    data, data_map = extract_data(args.embedding_key, args.embedding_level, args.seed, args.experiment_flag)
+    data_provider, (data, data_map) = extract_data(args.embedding_key, args.embedding_level, args.seed, args.experiment_flag)
 
     print("Wrapping data")
     train_set, valid_set, test_set = wrap_data(args.batch_size, args.seed, data)
@@ -153,6 +153,7 @@ if __name__ == "__main__":
         test_data=test_set,
         data_map=data_map,
         experiment_flag=args.experiment_flag,
+        data_provider=data_provider,
     )
 
     experiment_metrics, test_metrics = experiment.run_experiment()  # run experiment and return experiment metrics

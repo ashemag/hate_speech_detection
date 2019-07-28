@@ -30,6 +30,11 @@ class LSTM(nn.Module):
         out = out.permute([2, 0, 1])
         return out
 
+    def build_fc_layer(self, input_shape):
+        self.layer_dict['fc_layer'] = nn.Linear(in_features=input_shape[1],  # add a linear layer
+                                                out_features=self.num_output_classes,
+                                                bias=self.use_bias)
+
     def build_layers(self, input_shape, layer_key='first'):
         """
         Builds network whilst automatically inferring shapes of layers.

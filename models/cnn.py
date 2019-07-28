@@ -83,8 +83,6 @@ class CNN(nn.Module):
             context_list.append(out)
 
         out = torch.cat(context_list, dim=1)
-        out_shape = out.permute([0, 2, 1]).shape
-
         out = F.max_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
         self.layer_dict['fc_layer_{}'.format(layer_key)] = nn.Linear(in_features=out.shape[1],  # add a linear layer
@@ -93,8 +91,6 @@ class CNN(nn.Module):
 
         out = self.layer_dict['fc_layer_{}'.format(layer_key)](out)  # apply linear layer on flattened inputs
         print("Block is built, output volume is {} for layer key {}".format(out.shape, layer_key))
-
-        return out_shape
 
     def forward(self, x, layer_key='first', flatten_flag=True):
         """
@@ -118,7 +114,8 @@ class CNN(nn.Module):
         if flatten_flag:
             out = F.max_pool1d(out, out.shape[-1])
             out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
-        else:
+        else: #don't flatten but max pool
+            out = F.max_pool1d(out, out.shape[-1])
             out = out.permute(0, 2, 1)
 
         return out

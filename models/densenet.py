@@ -44,7 +44,7 @@ class DenseNet(Network):
         self.reduction=reduction
         self.block=block
         self.layer_dict = nn.ModuleDict()
-
+        self.use_bias=False
     def build_layers(self, input_shape, layer_key='first'):
         x = torch.zeros(input_shape)
         out = self.process(x)
@@ -102,6 +102,11 @@ class DenseNet(Network):
         else:
             out = out.reshape(out.shape[0], out.shape[1], 1)
         return out
+
+    def build_fc_layer(self, input_shape):
+        self.layer_dict['fc_layer'] = nn.Linear(in_features=input_shape[1],  # add a linear layer
+                                                out_features=self.num_output_classes,
+                                                bias=self.use_bias)
 
     def forward(self, x, layer_key='first', flatten_flag=True):
         out = self.process(x)

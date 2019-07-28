@@ -9,16 +9,17 @@ import time
 from sklearn.metrics import f1_score, precision_score, recall_score
 from torch import optim
 import torch.nn.functional as F
-
-from utils import prepare_output_file, aggregate
-from globals import TWEET_SENTENCE_SIZE
+import spacy
+from utils import *
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
 DEBUG = False
 
 
 class ExperimentBuilder(nn.Module):
-    def __init__(self, network_model, device, hyper_params, data_map, train_data, valid_data, test_data, experiment_flag):
+    def __init__(self, network_model, device, hyper_params, data_map,
+                 train_data, valid_data, test_data, experiment_flag,
+                 data_provider):
         """
         Initializes an ExperimentBuilder object. Such an object takes care of running training and evaluation of a deep net
         on a given dataset. It also takes care of saving per epoch models and automatically inferring the best val model
@@ -34,7 +35,7 @@ class ExperimentBuilder(nn.Module):
         self.num_epochs = hyper_params['num_epochs']
         self.starting_epoch = 0
         self.state = dict()
-
+        self.data_provider = data_provider
 
         # re-initialize network parameters
         self.data_map = data_map
@@ -90,13 +91,24 @@ class ExperimentBuilder(nn.Module):
 
     def forward_pass_helper(self, x):
         tweet_input, feature_input = x[0], x[1]
-        if self.experiment_flag == 2 or self.experiment_flag == 4:
 
+        if self.experiment_flag == 2 or self.experiment_flag == 4:
             #  tweet level processing
             feature_input = feature_input.to(self.device)
             tweet_input = tweet_input.to(self.device)
             feature_out = self.model.forward(feature_input, layer_key='feature', flatten_flag=True)
             tweet_out = self.model.forward(tweet_input, layer_key='tweet', flatten_flag=True)
+
+            out = torch.cat((tweet_out.cpu(), feature_out.cpu()), 1).to(self.device)
+            return self.model.layer_dict['fc_layer'](out)
+
+        elif self.experiment_flag == 5:
+            #  tweet level processing
+            tweet_input = tweet_input.to(self.device)
+            tweet_out = self.model.forward(tweet_input, layer_key='tweet', flatten_flag=True)
+
+            feature_out = np.sum([self.model.forward(item.to(self.device), layer_key='user-timeline').cpu() for item in feature_input])
+            print(feature_out.shape)
             out = torch.cat((tweet_out.cpu(), feature_out.cpu()), 1).to(self.device)
             return self.model.layer_dict['fc_layer'](out)
 
@@ -256,45 +268,86 @@ class ExperimentBuilder(nn.Module):
         embedded_tweets = []
         embedded_context_tweets = []
         embedded_topic_words = []
+        embedded_timeline_list = []
+
         for _id in sample_ids:
             embedded_tweet = self.data_map[_id]['embedded_tweet']
             if self.experiment_flag == 2:
-                embedded_context_tweets.append(torch.Tensor(self.data_map[_id]['embedded_context_tweet']))
-            if self.experiment_flag == 3:
+                # concatenates retweet/favorite to tweet
                 retweet_count, favorite_count = self.data_map[_id]['retweet_count'], self.data_map[_id]['favorite_count']
                 features = torch.Tensor([[retweet_count, favorite_count] for _ in range(embedded_tweet.shape[0])])
                 embedded_tweet = np.concatenate((embedded_tweet, features), -1)
-            if self.experiment_flag == 4:
-                embedded_topic_words.append(self.data_map[_id]['embedded_topic_words'])
-                embedded_tweet = self.data_map[_id]['embedded_tweet_perplexity_cohesion']
+                # adds context tweet
+                embedded_context_tweets.append(torch.Tensor(self.data_map[_id]['embedded_context_tweet']))
+            if self.experiment_flag == 3:
+                # concatenates retweet/favorite to tweet
+                retweet_count, favorite_count = self.data_map[_id]['retweet_count'], self.data_map[_id]['favorite_count']
+                features = torch.Tensor([[retweet_count, favorite_count] for _ in range(embedded_tweet.shape[0])])
+                embedded_tweet = np.concatenate((embedded_tweet, features), -1)
+            # if self.experiment_flag == 4:
+            #     # create topic words
+            #     # get all tweets tweets in this batch
+            #     embedded_topic_words.append(embedded_topic_words)
+            if self.experiment_flag == 5:
+                embedded_timeline_list = [torch.Tensor(tweet).float()
+                                          for tweet in self.data_map[_id]['embedded_user_timeline']]
 
             # append main tweet
             embedded_tweets.append(embedded_tweet)
+
+        # get all tweets as corpus and do LDA from that
+        if self.experiment_flag == 4:
+            nlp = spacy.load('en', disable=['parser', 'ner'])
+            tweets = [self.data_map[_id]['tokens'] for _id in sample_ids]
+            perplexity, coherence, topic_words = get_scores(tweets, nlp, self.seed)
+            embedded_topic_words = self.data_provider.embed_words(topic_words, [perplexity, coherence])
+            return torch.Tensor(embedded_tweets).float(), \
+                   torch.Tensor([embedded_topic_words for _ in range(len(sample_ids))]).float()
+
         if self.experiment_flag == 2:
             return torch.Tensor(embedded_tweets).float(), torch.Tensor(embedded_context_tweets).float()
-        elif self.experiment_flag == 1: #experiments 1 and 3
+        elif self.experiment_flag == 1 or self.experiment_flag == 3:  # experiments 1 and 3
             return torch.Tensor(embedded_tweets).float(), torch.Tensor(embedded_tweets).float()
-        elif self.experiment_flag == 4:
-            return torch.Tensor(embedded_tweets).float(), torch.Tensor(embedded_topic_words).float()
+        elif self.experiment_flag == 5:
+            return torch.Tensor(embedded_tweets).float(), embedded_timeline_list
+
+    @staticmethod
+    def flatten_embedding(out):
+        """
+        Flattens tweet embedding to have dim (batch_size, 1, embed_dim)
+        :param out:
+        :return:
+        """
+        out = F.max_pool1d(out, out.shape[-1])
+        out = out.permute([0, 2, 1])
+        return out
 
     def build_model(self, data_sample):
         # build model
         embedded_tweet, features_tweet = data_sample  # first element, tuple, first value in tuple
 
-        _ = self.model.build_layers(features_tweet.shape, 'feature')
-        _ = self.model.build_layers(embedded_tweet.shape, 'tweet')
-
-        features_tweet_out = self.model.forward(torch.zeros(features_tweet.shape), layer_key='feature')
+        self.model.build_layers(embedded_tweet.shape, 'tweet')
         embedded_tweet_out = self.model.forward(torch.zeros(embedded_tweet.shape), layer_key='tweet')
 
-        out = torch.cat((embedded_tweet_out, features_tweet_out), 1)
+        if self.experiment_flag == 1 or self.experiment_flag == 3:
+            out = embedded_tweet_out
+        elif self.experiment_flag == 2 or self.experiment_flag == 4:
+            self.model.build_layers(features_tweet.shape, 'feature')
+            features_tweet_out = self.model.forward(torch.zeros(features_tweet.shape), layer_key='feature')
+            out = torch.cat((embedded_tweet_out, features_tweet_out), 1)
+        elif self.experiment_flag == 5:
+            self.model.build_layers(embedded_tweet.shape, 'user-timeline')
+            user_timeline_tweet_out = self.model.forward(torch.zeros(embedded_tweet.shape), layer_key='user-timeline')
+            out = torch.cat((embedded_tweet_out, user_timeline_tweet_out), 1)
+
         self.model.build_fc_layer(out.shape)
 
     def preprocess_data(self):
         print("Preprocessing train data")
+        start = time.time()
         self.train_data = [(self.extract_sample_data(x), y) for x, y in self.train_data_raw]
-
         self.build_model(self.train_data[0][0])
+        print("Preprocessing train data finished in {:.2f} minutes".format((time.time() - start) / 60))
 
         print("Preprocessing valid data")
         self.valid_data = [(self.extract_sample_data(x), y) for x, y in self.valid_data_raw]

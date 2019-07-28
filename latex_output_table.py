@@ -25,7 +25,7 @@ models = ['MLP', 'CNN', 'LSTM', 'DENSENET']
 metrics = ['test_f_score_hateful', 'test_f_score_abusive', 'test_f_score', 'test_precision', 'test_recall']
 embeddings = ['NA_tdidf', 'twitter_word', 'bert_word']
 output_str = ''
-EXPERIMENT_KEY = 'phase_3'
+EXPERIMENT_KEY = 'phase_4'
 for i, model in enumerate(models):
     for j, embed in enumerate(embeddings):
 

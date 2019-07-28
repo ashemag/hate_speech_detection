@@ -67,8 +67,10 @@ def get_scores(docs, nlp):
                     # topic_keywords = ", ".join([word for word, prop in wp])
                 else:
                     break
-        topic_words = Counter(dominant_keywords).most_common(10)
-        # topic_words = []
+
+        topic_words = Counter([keyword for keyword in dominant_keywords if keyword not in ['-PRON-']]).most_common(10)
+
+
         # len(doc_lda)
         # Compute Perplexity
         # print('Perplexity: ', lda_model.log_perplexity(corpus))  # a measure of how good the model is. lower the better.
@@ -80,7 +82,7 @@ def get_scores(docs, nlp):
         # In my experience, topic coherence score, in particular, has been more helpful.
         #vis = pyLDAvis.gensim.prepare(lda_model, corpus, id2word)
 
-        return lda_model.log_perplexity(corpus), coherence_lda, topic_words
+        return lda_model.log_perplexity(corpus), coherence_lda, [word for (word, count) in topic_words]
     except:
         return None, None, None
 
