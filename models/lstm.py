@@ -6,7 +6,7 @@ import torch.nn.functional as F
 DILATION_PARAM = 1.4
 
 class LSTM(nn.Module):
-    def __init__(self, input_shape, num_hidden_layers, dropout=.5, use_bias=False, num_output_classes=4):
+    def __init__(self, num_hidden_layers, dropout=.5, use_bias=False, num_output_classes=4):
         """
         Initializes a convolutional network module object.
         :param input_shape: The shape of the inputs going in to the network.
@@ -18,14 +18,10 @@ class LSTM(nn.Module):
         """
         super(LSTM, self).__init__()
         # set up class attributes useful in building the network and inference
-        self.input_shape = input_shape
         self.num_hidden_layers = num_hidden_layers
         self.num_output_classes = num_output_classes
         self.use_bias = use_bias
-        self.logit_linear_layer = None
         self.layer_dict = nn.ModuleDict()
-        # build the network
-        self.build_module()
 
     @staticmethod
     def process(out):
@@ -34,43 +30,55 @@ class LSTM(nn.Module):
         out = out.permute([2, 0, 1])
         return out
 
-    def build_module(self):
+    def build_fc_layer(self, input_shape):
+        self.layer_dict['fc_layer'] = nn.Linear(in_features=input_shape[1],  # add a linear layer
+                                                out_features=self.num_output_classes,
+                                                bias=self.use_bias)
+
+    def build_layers(self, input_shape, layer_key='first'):
         """
         Builds network whilst automatically inferring shapes of layers.
         """
-        x = torch.zeros(self.input_shape)  # create dummy inputs to be used to infer shapes of layers
+        x = torch.zeros(input_shape)  # create dummy inputs to be used to infer shapes of layers
         out = self.process(x)
-        print("Building basic block of LSTM using input shape", out.shape)
-        print(out.shape)
+        print("Building basic block of LSTM using input shape {}".format(out.shape))
         # expects (seq_len, batch, input_size)
-        self.layer_dict['lstm'] = nn.LSTM(input_size=out.shape[-1],
-                                          hidden_size=self.num_hidden_layers,
-                                          bias=self.use_bias,
-                                          num_layers=3,
-                                          dropout=.5,
-                                          bidirectional=True)
+        self.layer_dict['lstm_{}'.format(layer_key)] = nn.LSTM(input_size=out.shape[-1],
+                                                               hidden_size=self.num_hidden_layers,
+                                                               bias=self.use_bias,
+                                                               num_layers=1,
+                                                               dropout=.5,
+                                                               bidirectional=True)
 
-        out, _ = self.layer_dict['lstm'](out)
+        out, _ = self.layer_dict['lstm_{}'.format(layer_key)](out)
+        out = F.max_pool1d(out, out.shape[-1])
         out = out.permute(1, 0, 2)
+        out_shape = out.permute([0, 2, 1]).shape
+
         out = out.contiguous().view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
-        self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
-                                            out_features=self.num_output_classes,
-                                            bias=self.use_bias)
 
-        print("Block is built, output volume is", out.shape)
-        return out
+        self.layer_dict['fc_layer_{}'.format(layer_key)] = nn.Linear(in_features=out.shape[1],  # add a linear layer
+                                                                     out_features=self.num_output_classes,
+                                                                     bias=self.use_bias)
 
-    def forward(self, x):
+        print("Block is built, output volume is {}".format(out.shape))
+        return out_shape
+
+    def forward(self, x, layer_key='first', flatten_flag=True):
         """
         Forward propages the network given an input batch
         :param x: Inputs x (b, c, h, w)
         :return: preds (b, num_classes)
         """
         out = self.process(x)
-        out, _ = self.layer_dict['lstm'](out)
+        out, _ = self.layer_dict['lstm_{}'.format(layer_key)](out)
         out = out.permute(1, 0, 2)
-        out = out.contiguous().view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
-        out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
+        out = F.max_pool1d(out, out.shape[-1])
+
+        if flatten_flag:
+            out = out.contiguous().view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
+        else: # will go into another LSTM layer
+            out = out.permute([0, 2, 1]) #outputs (batch, sequence, dim)
         return out
 
     def reset_parameters(self):
@@ -82,10 +90,8 @@ class LSTM(nn.Module):
                 item.reset_parameters()
             except:
                 pass
-        self.logit_linear_layer.reset_parameters()
 
 
-def lstm(input_shape):
+def lstm():
     return LSTM(num_output_classes=4,
-                num_hidden_layers=5,
-                input_shape=input_shape)
+                num_hidden_layers=5)

@@ -2,11 +2,17 @@
 Helpers for tweet extraction/processing
 """
 import csv
+import gensim
 import os
+from collections import Counter
+
 from sklearn.model_selection import train_test_split
 from globals import ROOT_DIR
 import numpy as np
 import string
+import gensim.corpora as corpora
+from gensim.models import CoherenceModel
+import spacy
 
 TWEET_SENTENCE_SIZE = 17  # 16 is average tweet token length
 
@@ -24,6 +30,18 @@ def split_data(x, y, seed, verbose=True):
     return x_train, y_train, x_valid, y_valid, x_test, y_test
 
 
+def aggregate(start, end, file_names):
+    aggregate_data = {}
+    for i in range(start, end):
+        path_name = os.path.join(ROOT_DIR, 'data/{}_{}.npz'.format(file_names, i))
+        results = np.load(path_name, allow_pickle=True)
+        print("Downloading {}, Processed {} / {}".format(path_name, i+1, end - start))
+        results = results['a']
+        results = results[()]
+        aggregate_data = {**results, **aggregate_data}
+    return aggregate_data
+
+
 def extract_labels(filename):
     print("=== Extracting annotations ===")
     data = {}
@@ -38,24 +56,51 @@ def generate_random_embedding(embed_dim):
     return np.random.normal(scale=0.6, size=(embed_dim,))
 
 
-def convert_to_feature_embeddings(x_embed, key='embedding'):
-    if key == 'tokens': #  for tdidf
-        return [' '.join(x[key]) for x in x_embed]
-    return [x[key] for x in x_embed]
-
-
-def process_outputs(outputs, experiment_flag=2):
-    """
-    Cleans text, creates context tweets for reply experiment, and tokenizes
-    :param outputs: tweet data / label
-    :param experiment_flag: denotes what round of experiments this is, 1) tweet, 2) tweet + context tweet 3) reply net
-    :return:
-    """
-    replies = np.load(os.path.join(ROOT_DIR, 'data/reply_data.npy'))
+def extract_tweets(label_data, data, experiment_flag):
+    print("=== Processing tweet data maps from JSON ===")
+    labels = []
+    labels_map = {'hateful': 0, 'abusive': 1, 'normal': 2, 'spam': 3}
+    error_count = 0
+    outputs = {}
+    replies = np.load(os.path.join(ROOT_DIR, 'data/reply_data.npy'), allow_pickle=True)
     replies = replies[()]
+    user_lda_scores = np.load(os.path.join(ROOT_DIR, 'data/user_lda_scores_final.npz'), allow_pickle=True)['a'][()]
+    if experiment_flag == 5:
+        user_timelines = aggregate(1, 18, 'timeline/user_timeline_processed')
+        print("User timeline data s length {}".format(len(user_timelines)))
+    for j, (key, value) in enumerate(data.items()):
 
-    outputs_processed = []
-    for output in outputs:
+        if int(value['id_str']) not in label_data:
+            error_count += 1
+            continue
+
+        output = {}
+        output['id'] = value['id_str']
+        output['tweet'] = value['text']
+        output['label'] = labels_map[label_data[int(value['id_str'])]]
+        labels.append(output['label'])
+        output['retweeted'] = int(value['retweeted'])
+        output['in_reply_to_status_id'] = value['in_reply_to_status_id'] if value[
+                                                                      'in_reply_to_status_id'] is not None else -1
+        output['user_id'] = value['user']['id']
+        output['retweet_count'] = 0 if value['retweet_count'] == 0 else np.log(value['retweet_count'])
+        output['favorite_count'] = 0 if value['favorite_count'] == 0 else np.log(value['favorite_count'])
+        output['label_string'] = label_data[int(value['id_str'])]
+
+        if output['user_id'] in user_lda_scores:
+            perplexity, cohesion, topic_words = user_lda_scores[output['user_id']]
+            topic_words = [word for (word, _) in topic_words]
+            if len(topic_words) < 10:
+                for _ in range(10 - len(topic_words)):
+                    topic_words.append(' ')
+            output['user_topic_tokens'] = topic_words
+            output['perplexity'] = perplexity
+            output['cohesion'] = cohesion
+        else:
+            output['user_topic_tokens'] = [' '] * 10
+            output['perplexity'] = 0
+            output['cohesion'] = 0
+
         # add context tweet
         status_id = str(output['in_reply_to_status_id'])
         if status_id in replies:
@@ -65,40 +110,21 @@ def process_outputs(outputs, experiment_flag=2):
 
         #  tokenize / clean
         output['tokens'] = output['tweet'].translate(str.maketrans('', '', string.punctuation)).lower()
-
-        if experiment_flag == 2:
-            output['context_tokens'] = output['context_tweet'].translate(str.maketrans('', '', string.punctuation)).lower() if output['context_tweet'] else None
-
         output['tokens'] = output['tokens'].split(' ')
-        outputs_processed.append(output)
-    return outputs_processed
+        if experiment_flag == 2:
+            output['context_tokens'] = output['context_tweet'].translate(
+                str.maketrans('', '', string.punctuation)).lower() if output['context_tweet'] else None
+            output['context_tokens'] = output['context_tokens'].split() if output['context_tokens'] else None
 
+        if experiment_flag == 5:
+            if output['user_id'] in user_timelines:
+                timeline = user_timelines[output['user_id']]
+                timeline_tokens = [tweet for i, tweet in enumerate(timeline) if i < 200]
+                assert len(timeline_tokens) == 200
+                output['user_timeline'] = timeline_tokens
 
-def extract_tweets(label_data, data, experiment_flag):
-    print("=== Extracting tweets from JSON ===")
-    labels = []
-    labels_map = {'hateful': 0, 'abusive': 1, 'normal': 2, 'spam': 3}
-    error_count = 0
-    outputs = []
-
-    for key, value in data.items():
-
-        if int(value['id_str']) not in label_data:
-            error_count += 1
-            continue
-        output = {}
-        output['tweet'] = value['text']
-        output['label'] = labels_map[label_data[int(value['id_str'])]]
-        labels.append(output['label'])
-        output['retweet_count'] = value['retweet_count']
-        output['retweeted'] = int(value['retweeted'])
-        output['in_reply_to_status_id'] = value['in_reply_to_status_id'] if value[
-                                                                                'in_reply_to_status_id'] is not None else -1
-        output['favorite_count'] = value['favorite_count']
-        output['label_string'] = label_data[int(value['id_str'])]
-        outputs.append(output)
-    outputs_processed = process_outputs(outputs, experiment_flag)
-    return outputs_processed, labels
+        outputs[output['id']] = output
+    return outputs, labels
 
 
 def prepare_output_file(filename, output=None, file_action_key='a+', aggregate=False):
@@ -145,6 +171,55 @@ def prepare_output_file(filename, output=None, file_action_key='a+', aggregate=F
 
         for entry in output:
             writer.writerow(entry)
+
+
+def lemmatization(texts, nlp, allowed_postags=['NOUN', 'ADJ', 'VERB', 'ADV']):
+    """https://spacy.io/api/annotation"""
+    texts_out = []
+    for sent in texts:
+        doc = nlp(" ".join(sent))
+        texts_out.append([token.lemma_ for token in doc if token.pos_ in allowed_postags])
+    return texts_out
+
+
+def get_scores(docs, nlp, seed):
+    try:
+        data_lemmatized = lemmatization(docs, nlp, allowed_postags=['NOUN', 'ADJ', 'ADV'])
+
+        # Create Dictionary
+        id2word = corpora.Dictionary(data_lemmatized)
+
+        # Create Corpus
+        texts = data_lemmatized
+
+        # Term Document Frequency
+        corpus = [id2word.doc2bow(text) for text in texts]
+        lda_model = gensim.models.ldamulticore.LdaMulticore(corpus=corpus,
+                                                            id2word=id2word,
+                                                            num_topics=20,
+                                                            random_state=seed,
+                                                            passes=3,
+                                                            workers=3)
+        # # Print the Keyword in the 10 topics
+        dominant_keywords = []
+        for i, row_list in enumerate(lda_model[corpus]):
+            row = row_list[0] if lda_model.per_word_topics else row_list
+            row = sorted(row, key=lambda x: (x[1]), reverse=True)
+            # Get the Dominant topic, Perc Contribution and Keywords for each document
+            for j, (topic_num, prop_topic) in enumerate(row):
+                if j == 0:  # => dominant topic
+                    wp = lda_model.show_topic(topic_num)
+                    dominant_keywords.extend([word for word, prop in wp])
+                else:
+                    break
+        topic_words = Counter([keyword for keyword in dominant_keywords if keyword not in ['-PRON-']]).most_common(10)
+
+        # Compute Coherence Score
+        coherence_model_lda = CoherenceModel(model=lda_model, texts=data_lemmatized, dictionary=id2word, coherence='c_v')
+        coherence_lda = coherence_model_lda.get_coherence()
+        return lda_model.log_perplexity(corpus), coherence_lda, [word for (word, count) in topic_words]
+    except:
+        return None, None, None
 
 
 if __name__ == "__main__":

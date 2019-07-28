@@ -5,6 +5,7 @@ from utils import *
 import torch
 import torch.utils.data
 import pandas as pd
+from bert_embedding import BertEmbedding
 
 GOOGLE_EMBED_DIM = 300
 TWITTER_EMBED_DIM = 400
@@ -13,50 +14,23 @@ TWEET_WORD_SIZE = 20 # selected by histogram of tweet counts
 FASTTEXT_EMBED_DIM = 300
 EMBED_DIM = 200
 NUM_CLASSES = 4
-
+BERT_EMBEDDING_NUM = 11
+TDIDF_MAX_FEATURES = 500
+BERT_EMBED_DIM = 768
 
 class DataProvider(data.Dataset):
     """Generic data provider."""
 
-    def __init__(self, inputs, targets, seed, transform=None, make_one_hot=False):
-        self.inputs = np.array(inputs)
-        self.num_classes = len(set(targets))
-        self.transform = transform
-
-        if make_one_hot:
-            self.targets = self.to_one_of_k(targets)
-        else:
-            self.targets = np.array(targets)
+    def __init__(self, inputs, targets, seed):
+        self.inputs = list(inputs)
+        self.targets = targets
         self.rng = np.random.RandomState(seed)
 
     def __len__(self):
         return len(self.inputs)
 
     def __getitem__(self, index):
-        sample = self.inputs[index]
-        if self.transform:
-            sample = self.transform(sample)
-
-        return sample, self.targets[index]
-
-    def to_one_of_k(self, int_targets):
-        """Converts integer coded class target to 1 of K coded targets.
-
-        Args:
-            int_targets (ndarray): Array of integer coded class targets (i.e.
-                where an integer from 0 to `num_classes` - 1 is used to
-                indicate which is the correct class). This should be of shape
-                (num_data,).
-
-        Returns:
-            Array of 1 of K coded targets i.e. an array of shape
-            (num_data, num_classes) where for each row all elements are equal
-            to zero except for the column corresponding to the correct class
-            which is equal to one.
-        """
-        one_of_k_targets = np.zeros((int_targets.shape[0], self.num_classes))
-        one_of_k_targets[range(int_targets.shape[0]), int_targets] = 1
-        return one_of_k_targets
+        return self.inputs[index], self.targets[index]
 
 
 class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
@@ -81,7 +55,7 @@ class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
         # distribution of classes in the dataset
         label_to_count = {}
         for idx in self.indices:
-            inputs, label = dataset[idx]
+            inputs, label = dataset[idx][0], dataset[idx][1]
             if label in label_to_count:
                 label_to_count[label] += 1
             else:
@@ -99,60 +73,44 @@ class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
 
 
 class TextDataProvider(object):
-    def __init__(self, path_data, path_labels, experiment_flag):
+    def __init__(self, path_data, path_labels, experiment_flag, embedding_key):
         self.experiment_flag = experiment_flag
+
+        # create ouputs with tweet data
         label_data = pd.read_csv(path_labels, header='infer', index_col=0, squeeze=True).to_dict()
-        data = np.load(os.path.join(ROOT_DIR, path_data))
+        data = np.load(os.path.join(ROOT_DIR, path_data), allow_pickle=True)
         data = data[()]
         self.outputs, self.labels = extract_tweets(label_data, data, self.experiment_flag)
+        self.embedding_key = embedding_key
 
-    @staticmethod
-    def _fetch_model(tweets_corpus, key):
-        if key == 'google':
-            print("[Model] Using {} embeddings".format(key))
-            embed_dim = GOOGLE_EMBED_DIM
-            filename = os.path.join(ROOT_DIR, 'data/GoogleNews-vectors-negative300.bin')
-            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
-        elif key == 'twitter':
-            print("[Model] Using {} embeddings".format(key))
-            embed_dim = TWITTER_EMBED_DIM
+        # populate outputs with specific embeddings
+        if embedding_key == 'twitter':
+            self.embed_dim = TWITTER_EMBED_DIM
             filename = os.path.join(ROOT_DIR, 'data/word2vec_twitter_model/word2vec_twitter_model.bin')
-            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
-        elif 'fasttext' in key:
-            print("[Model] Using {} embeddings".format(key))
-            embed_dim = FASTTEXT_EMBED_DIM
-            if key == 'fasttext-wiki':
-                filename = os.path.join(ROOT_DIR, 'data/fasttext/wiki-news-300d-1M.vec')
-            elif key == 'fasttext-wiki-subword':
-                filename = os.path.join(ROOT_DIR, 'data/fasttext/wiki-news-300d-1M-subword.vec')
-            elif key == 'fasttext-crawl':
-                filename = os.path.join(ROOT_DIR, 'data/fasttext/crawl-300d-2M.vec')
-            elif key == 'fasttext-crawl-subword':
-                filename = os.path.join(ROOT_DIR, 'data/fasttext/crawl-300d-2M-subword.vec')
-            word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
-        else:
-            print("[Model] Using {} embeddings".format(key))
-            embed_dim = EMBED_DIM
-            model = word2vec.Word2Vec(sentences=tweets_corpus, size=embed_dim)
-            model.train(tweets_corpus, total_examples=len(tweets_corpus), epochs=100)
-            word_vectors = model.wv
-        return word_vectors, embed_dim
+            self.word_vectors = KeyedVectors.load_word2vec_format(filename, binary=True, unicode_errors='ignore')
+            self.generate_twitter_embeddings()
+        elif embedding_key == 'bert':
+            self.embed_dim = BERT_EMBED_DIM
+            self.bert_embeddings = self.generate_bert_embedding_dict()
+            self.generate_bert_embeddings()
+            self.bert_embedding_generator = BertEmbedding()
+        elif embedding_key == 'tdidf':
+            self.embed_dim = TDIDF_MAX_FEATURES
+            self.vectorizer = None
 
     @staticmethod
-    def fetch_character_symbols(raw_tweets):
-        """
-        Dynamically create mapping for one hot encoding of chars
-        :param raw_tweets: list of all tweets
-        :return:
-        """
-        chars = set()
-        for i, tweet in enumerate(raw_tweets):
-            for word in tweet:
-                chars.update(list(word))
-        char_mapping = {char: np.eye(len(chars))[index] for index, char in enumerate(chars)}
-        return chars, char_mapping
+    def generate_bert_embedding_dict():
+        embeddings = {}
+        for i in range(BERT_EMBEDDING_NUM):
+            results = np.load(os.path.join(ROOT_DIR, 'data/bert_embeddings_{}.npz'.format(i)), allow_pickle=True)
+            print("Downloading Bert, Processed {} / {}".format(i+1, BERT_EMBEDDING_NUM))
+            results = results['a']
+            results = results[()]
+            embeddings = {**results, **embeddings}
+        return embeddings
 
-    def process_tweet(self, tweet, embed_dim, word_vectors):
+    @staticmethod
+    def process_tweet(tweet, embed_dim, word_vectors):
         embedded_tweet = []
 
         # trim if too large
@@ -170,65 +128,150 @@ class TextDataProvider(object):
             embedded_tweet += [generate_random_embedding(embed_dim) for _ in range(diff)]
         return embedded_tweet
 
-    def fetch_word_embeddings(self, outputs, word_vectors, embed_dim, experiment_flag=2):
-        outputs_embed = []
-        for i, output in enumerate(outputs):
+    def embed_words(self, words, scores=None):
+        embedded_words = []
+        if self.embedding_key == 'twitter':
+            # convert all into word embeddings
+            for word in words:
+                embedding = generate_random_embedding(self.embed_dim) if word not in self.word_vectors else self.word_vectors[word]
+                embedded_words.append(embedding)
+        elif self.embedding_key == 'bert':
+            items = self.bert_embedding_generator(words)
+            for item in items:
+                try:
+                    embedded_words.append(item[1][0])
+                except:
+                    embedded_words.append(np.zeros((self.embed_dim,)))
+        elif self.embedding_key == 'tdidf':
+            embedded_words = np.array(self.vectorizer.transform(words).todense())
+
+        if scores:
+            embedded_words = self.add_scores(embedded_words, 10, scores)
+        embedded_words = np.array(embedded_words)
+        return embedded_words
+
+    @staticmethod
+    def add_scores(embeds, word_count, scores):
+        features = np.array([scores for _ in range(word_count)])  # adding 1
+        embed = np.concatenate((embeds, features), -1)
+        return embed
+
+    def generate_twitter_embeddings(self):
+        # if self.experiment_flag == 4:
+        #     user_lda_scores = np.load(os.path.join(ROOT_DIR, 'data/user_lda_scores_final.npz'))
+        #     user_lda_scores = user_lda_scores['a'][()]
+        #     print("Length of lda scores {}".format(len(user_lda_scores)))
+        for j, (key, output) in enumerate(self.outputs.items()):
 
             # process first tweet
-            tweet = output['tokens']
-            embedded_tweet = self.process_tweet(tweet, embed_dim, word_vectors)
+            embedded_tweet = self.process_tweet(output['tokens'], self.embed_dim, self.word_vectors)
+            assert len(embedded_tweet) == TWEET_SENTENCE_SIZE
+            self.outputs[key]['embedded_tweet'] = embedded_tweet
 
-            if experiment_flag == 2:
-                #proceses second tweet
+            if self.experiment_flag == 2:
+                embedded_context_tweet = []
                 if output['context_tweet'] is None:
-                    for i in range(TWEET_SENTENCE_SIZE):
-                        blank_embedding = np.zeros(embed_dim,)
-                        embedded_tweet.append(blank_embedding)
+                    for _ in range(TWEET_SENTENCE_SIZE):
+                        blank_embedding = np.zeros(self.embed_dim,)
+                        embedded_context_tweet.append(blank_embedding)
                 else:
-                    context_embedding = self.process_tweet(output['context_tweet'], embed_dim, word_vectors)
-                    for i in range(TWEET_SENTENCE_SIZE):
-                        embedded_tweet.append(context_embedding[i])
+                    context_embedding = self.process_tweet(output['context_tokens'], self.embed_dim, self.word_vectors)
+                    for j in range(TWEET_SENTENCE_SIZE):
+                        embedded_context_tweet.append(context_embedding[j])
+                assert len(embedded_context_tweet) == TWEET_SENTENCE_SIZE
+                self.outputs[key]['embedded_context_tweet'] = embedded_context_tweet
 
-                assert len(embedded_tweet) == TWEET_SENTENCE_SIZE*2
-
-            output['embedding'] = embedded_tweet
-            outputs_embed.append(output)
-        return outputs_embed
+            elif self.experiment_flag == 5:
+                if j % 1000 == 0:
+                    print("Processing tweet {}/{}".format(j, len(self.outputs)))
+                user_timeline = self.outputs[key]['user_timeline']
+                user_timeline_processed = [self.process_tweet(tweet, self.embed_dim, self.word_vectors)
+                                           for tweet in user_timeline]
+                output[key]['embedded_user_timeline'] = user_timeline_processed
 
     def generate_tdidf_embeddings(self, seed):
-        x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(self.outputs, self.labels, seed)
+        x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(list(self.outputs.keys()), self.labels, seed)
+        self.vectorizer = TfidfVectorizer(use_idf=True, max_features=TDIDF_MAX_FEATURES)
 
-        x_train = convert_to_feature_embeddings(x_train, key='tokens')
-        x_valid = convert_to_feature_embeddings(x_valid, key='tokens')
-        x_test = convert_to_feature_embeddings(x_test, key='tokens')
+        for i, _set in enumerate([x_train, x_valid, x_test]):
+            if i == 0:
+                self.vectorizer.fit([self.outputs[key]['tweet'] for key in _set])
 
-        vectorizer = TfidfVectorizer(use_idf=True, max_features=10000)
+            embedded_tweets = self.vectorizer.transform([self.outputs[key]['tweet'] for key in _set]).todense()
+            embedded_context_tweets = self.vectorizer.transform(
+                [self.outputs[key]['context_tweet'] if self.outputs[key]['context_tweet'] is not None else '' for key in
+                 _set]).todense()
+            embedded_topics = self.vectorizer.transform(
+                [' '.join(self.outputs[key]['user_topic_tokens']) for key in _set]).todense()
 
-        return {'x_train': vectorizer.fit_transform(x_train).todense(),
+            perplexity_mean = np.mean([self.outputs[key]['perplexity'] for key in _set])
+            cohesion_mean = np.mean([self.outputs[key]['cohesion'] for key in _set])
+            features = np.array([[perplexity_mean, cohesion_mean] for _ in range(len(_set))])
+            embedded_topics = np.concatenate((np.array(embedded_topics), features), -1)
+
+            # if self.experiment_flag == 5:
+            #     pass
+            #     # embedded_timeline_tweets = []
+            #     # for i in range(200):
+                #     for key in _set:
+                #     self.outputs[key]['embedded_tweet_user_timeline_{}'.format(i)] = vectorizer.transform(
+                #         [self.outputs[key]['user_timeline_tokens_{}'].format(i) for key in _set
+                #          if 'user_timeline_tokens_{}'.format(i) in self.outputs[key]]).todense())
+
+            for i, key in enumerate(_set):
+                self.outputs[key]['embedded_tweet'] = np.array(embedded_tweets[i])
+                self.outputs[key]['embedded_context_tweet'] = np.array(embedded_context_tweets[i])
+                self.outputs[key]['embedded_topic_words'] = np.array(embedded_topics[i])
+
+        return {'x_train': x_train,
                 'y_train': y_train,
-                'x_valid': vectorizer.transform(x_valid).todense(),
+                'x_valid': x_valid,
                 'y_valid': y_valid,
-                'x_test': vectorizer.transform(x_test).todense(),
-                'y_test': y_test}
+                'x_test': x_test,
+                'y_test': y_test}, self.outputs
 
-    def generate_word_level_embeddings(self, embedding_key, seed):
-        x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(self.outputs, self.labels, seed)
-        word_vectors, embed_dim = self._fetch_model(x_train, embedding_key)
+    def generate_bert_embeddings(self):
+        """
+        :param embeddings: preprocessed bert word embeddings
+        :param data: has all fields, separate fn from gen_word_embeddings
+        :return:
+        """
+        for key, output in self.outputs.items():
+            self.outputs[key]['embedded_tweet'] = self.bert_embeddings[int(output['id'])]
+        if self.experiment_flag == 2 or self.experiment_flag == 4:
+            bert_embedded_topic_words = aggregate(0, 65, 'bert/bert_topic_words')
 
-        # embed inputs
-        x_train_embed = self.fetch_word_embeddings(x_train, word_vectors, embed_dim, self.experiment_flag)
-        x_valid_embed = self.fetch_word_embeddings(x_valid, word_vectors, embed_dim, self.experiment_flag)
-        x_test_embed = self.fetch_word_embeddings(x_test, word_vectors, embed_dim, self.experiment_flag)
+            # finding bert embedding for reply tweet
+            for i, (key, output) in enumerate(self.outputs.items()):
+                if self.experiment_flag == 2:
+                    tweet_embed = self.bert_embeddings[int(output['id'])]
+                    self.outputs[key]['embedded_tweet'] = tweet_embed
 
-        return {'x_train': convert_to_feature_embeddings(x_train_embed),
+                    reply_status_id = int(output['in_reply_to_status_id'])
+                    blank_embed = []
+                    if reply_status_id == -1 or reply_status_id not in self.bert_embeddings:
+                        for i in range(17):
+                            blank_embedding = np.zeros(BERT_EMBED_DIM, )
+                            blank_embed.append(blank_embedding)
+                        embedded_context_tweet = blank_embed
+                    else:
+                        embedded_context_tweet = self.bert_embeddings[reply_status_id]
+                    self.outputs[key]['embedded_context_tweet'] = embedded_context_tweet
+                if self.experiment_flag == 4:
+                    if output['user_id'] in bert_embedded_topic_words:
+                        embedded_topic_words = bert_embedded_topic_words[output['user_id']]
+                        print(embedded_topic_words.shape)
+                        self.outputs[key]['embedded_topic_words'] = embedded_topic_words
+                    else:
+                        self.outputs[key]['embedded_topic_words'] = np.zeros((10, BERT_EMBED_DIM + 2))
+
+    def generate_word_level_embeddings(self, seed):
+        x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(list(self.outputs.keys()), self.labels, seed)
+        print("Word embeddings generated")
+        return {'x_train': x_train,
                 'y_train': y_train,
-                'x_valid': convert_to_feature_embeddings(x_valid_embed),
+                'x_valid': x_valid,
                 'y_valid': y_valid,
-                'x_test': convert_to_feature_embeddings(x_test_embed),
+                'x_test': x_test,
                 'y_test': y_test
-                }
-
-    def generate_char_level_embeddings(self, seed):
-        raw_tweets = self.tokenize(self.raw_tweets)
-        processed_tweets = self.fetch_character_embeddings(raw_tweets)
-        return self._generate_embedding_output(processed_tweets, seed)
+                }, self.outputs

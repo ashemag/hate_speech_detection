@@ -8,7 +8,13 @@ WEIGHT_DECAY = 1e-4
 
 
 class CNN(nn.Module):
-    def __init__(self, input_shape, num_output_classes, num_filters, num_layers, dropout=.5, use_bias=False):
+    def __init__(self,
+                 num_output_classes,
+                 num_filters,
+                 num_layers,
+                 dropout=.5,
+                 input_shape_context=None,
+                 use_bias=False):
         """
         Initializes a convolutional network module object.
         :param input_shape: The shape of the inputs going in to the network.
@@ -20,18 +26,18 @@ class CNN(nn.Module):
         """
         super(CNN, self).__init__()
         # set up class attributes useful in building the network and inference
-        self.input_shape = input_shape
+        self.input_shape_context = input_shape_context
         self.num_filters = num_filters
         self.num_output_classes = num_output_classes
         self.use_bias = use_bias
         self.num_layers = num_layers
         self.drop = nn.Dropout(p=dropout, inplace=False)
-        self.logit_linear_layer = None
+
         # initialize a module dict, which is effectively a dictionary that can collect layers and integrate them into pytorch
         self.layer_dict = nn.ModuleDict()
 
         # build the network
-        self.build_module()
+        self.output_shape = None
 
     @staticmethod
     def process(out):
@@ -41,13 +47,18 @@ class CNN(nn.Module):
             out = out.reshape(out.shape[0], out.shape[1], 1)
         return out
 
-    def build_module(self):
+    def build_fc_layer(self, input_shape):
+        self.layer_dict['fc_layer'] = nn.Linear(in_features=input_shape[1],  # add a linear layer
+                                                out_features=self.num_output_classes,
+                                                bias=self.use_bias)
+
+    def build_layers(self, input_shape, layer_key='first'):
         """
         Builds network whilst automatically inferring shapes of layers.
         """
-        x = torch.zeros(self.input_shape)  # create dummy inputs to be used to infer shapes of layers
+        x = torch.zeros(input_shape)  # create dummy inputs to be used to infer shapes of layers
         out = self.process(x)
-        print("Building basic block of Convolutional Network using input shape", out.shape)
+        print("Building basic block of Convolutional Network using input shape {} for layer key {}".format(out.shape, layer_key))
         context_list = []
 
         for i in range(self.num_layers):  # for number of layers times
@@ -56,7 +67,7 @@ class CNN(nn.Module):
                 out = torch.cat(context_list, dim=1)
 
             dilation = int(DILATION_PARAM**i)
-            self.layer_dict['conv_{}'.format(i)] = nn.Conv1d(in_channels=out.shape[1],
+            self.layer_dict['conv_{}_{}'.format(i, layer_key)] = nn.Conv1d(in_channels=out.shape[1],
                                                              # add a conv layer in the module dict
                                                              kernel_size=3,
                                                              out_channels=self.num_filters[i],
@@ -64,9 +75,9 @@ class CNN(nn.Module):
                                                              bias=False,
                                                              dilation=dilation)
 
-            out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
-            self.layer_dict['batch_norm_{}'.format(i)] = nn.BatchNorm1d(num_features=out.shape[1])
-            out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            out = self.layer_dict['conv_{}_{}'.format(i, layer_key)](out)  # use layer on inputs to get an output
+            self.layer_dict['batch_norm_{}_{}'.format(i, layer_key)] = nn.BatchNorm1d(num_features=out.shape[1])
+            out = self.layer_dict['batch_norm_{}_{}'.format(i, layer_key)](out)
             out = F.leaky_relu(out)
             out = self.drop(out)
             context_list.append(out)
@@ -74,16 +85,14 @@ class CNN(nn.Module):
         out = torch.cat(context_list, dim=1)
         out = F.max_pool1d(out, out.shape[-1])
         out = out.view(out.shape[0], -1)
+        self.layer_dict['fc_layer_{}'.format(layer_key)] = nn.Linear(in_features=out.shape[1],  # add a linear layer
+                                  out_features=self.num_output_classes,
+                                  bias=self.use_bias)
 
-        self.logit_linear_layer = nn.Linear(in_features=out.shape[1],  # add a linear layer
-                                            out_features=self.num_output_classes,
-                                            bias=self.use_bias)
+        out = self.layer_dict['fc_layer_{}'.format(layer_key)](out)  # apply linear layer on flattened inputs
+        print("Block is built, output volume is {} for layer key {}".format(out.shape, layer_key))
 
-        out = self.logit_linear_layer(out)  # apply linear layer on flattened inputs
-        print("Block is built, output volume is", out.shape)
-        return out
-
-    def forward(self, x):
+    def forward(self, x, layer_key='first', flatten_flag=True):
         """
         Forward propages the network given an input batch
         :param x: Inputs x (b, c, h, w)
@@ -94,16 +103,20 @@ class CNN(nn.Module):
         for i in range(self.num_layers):  # for number of layers times
             if i > 0:
                 out = torch.cat(context_list, dim=1)
-            out = self.layer_dict['conv_{}'.format(i)](out)  # use layer on inputs to get an output
-            out = self.layer_dict['batch_norm_{}'.format(i)](out)
+            out = self.layer_dict['conv_{}_{}'.format(i, layer_key)](out)  # use layer on inputs to get an output
+            out = self.layer_dict['batch_norm_{}_{}'.format(i, layer_key)](out)
             out = F.leaky_relu(out)
             out = self.drop(out)
             context_list.append(out)
 
         out = torch.cat(context_list, dim=1)
-        out = F.max_pool1d(out, out.shape[-1])
-        out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
-        out = self.logit_linear_layer(out)  # pass through a linear layer to get logits/preds
+
+        if flatten_flag:
+            out = F.max_pool1d(out, out.shape[-1])
+            out = out.view(out.shape[0], -1)  # flatten outputs from (b, c, h, w) to (b, c*h*w)
+        else: #don't flatten but max pool
+            out = F.max_pool1d(out, out.shape[-1])
+            out = out.permute(0, 2, 1)
 
         return out
 
@@ -117,14 +130,11 @@ class CNN(nn.Module):
             except:
                 pass
 
-        self.logit_linear_layer.reset_parameters()
 
-
-def word_cnn(input_shape, dropout=.5):
+def word_cnn(dropout=.5):
     return CNN(num_output_classes=4,
                num_filters=[8, 8, 8],
                num_layers=3,
-               input_shape=input_shape,
                dropout=dropout)
 
 

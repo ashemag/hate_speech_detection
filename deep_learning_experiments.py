@@ -5,7 +5,6 @@ from comet_ml import Experiment # necessary for comet to function
 import argparse
 import configparser
 import torch
-from torch import optim
 from globals import ROOT_DIR
 from experiment_builder import ExperimentBuilder
 from data_providers import TextDataProvider, ImbalancedDatasetSampler, DataProvider
@@ -50,32 +49,28 @@ def get_args():
 def extract_data(embedding_key, embedding_level, seed, experiment_flag):
     path_data = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_DATA'])
     path_labels = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_LABELS'])
-    data_provider = TextDataProvider(path_data, path_labels, experiment_flag)
+    data_provider = TextDataProvider(path_data, path_labels, experiment_flag, embedding_key)
 
     if embedding_level == 'word':
-        output = data_provider.generate_word_level_embeddings(embedding_key, seed)
-    elif embedding_level == 'char':
-        output = data_provider.generate_char_level_embeddings(seed)
+        return data_provider, data_provider.generate_word_level_embeddings(seed)
     elif embedding_level == 'tdidf':
-        output = data_provider.generate_tdidf_embeddings(seed)
-
-    return output
+        return data_provider, data_provider.generate_tdidf_embeddings(seed)
 
 
-def wrap_data(batch_size, seed, x_train, y_train, x_valid, y_valid, x_test, y_test):
-    train_set = DataProvider(inputs=x_train, targets=y_train, seed=seed)
+def wrap_data(batch_size, seed, data_local):
+    train_set = DataProvider(inputs=data_local['x_train'], targets=data_local['y_train'], seed=seed)
     train_data_local = torch.utils.data.DataLoader(train_set,
                                                    batch_size=batch_size,
                                                    num_workers=2,
                                                    sampler=ImbalancedDatasetSampler(train_set))
 
-    valid_set = DataProvider(inputs=x_valid, targets=y_valid, seed=seed)
+    valid_set = DataProvider(inputs=data_local['x_valid'], targets=data_local['y_valid'], seed=seed)
     valid_data_local = torch.utils.data.DataLoader(valid_set,
                                                    batch_size=batch_size,
                                                    num_workers=2,
                                                    shuffle=False)
 
-    test_set = DataProvider(inputs=x_test, targets=y_test, seed=seed)
+    test_set = DataProvider(inputs=data_local['x_test'], targets=data_local['y_test'], seed=seed)
     test_data_local = torch.utils.data.DataLoader(test_set,
                                                   batch_size=batch_size,
                                                   num_workers=2,
@@ -84,33 +79,23 @@ def wrap_data(batch_size, seed, x_train, y_train, x_valid, y_valid, x_test, y_te
     return train_data_local, valid_data_local, test_data_local
 
 
-def fetch_model(model_local, embedding_level, input_shape_local, dropout):
+def fetch_model(model_local, embedding_level, dropout):
     if model_local == 'MLP':
-        return multi_layer_perceptron(input_shape_local)
+        return multi_layer_perceptron()
     if model_local == 'CNN':
-        if embedding_level == 'word' or embedding_level == 'tdidf':
-            return word_cnn(input_shape=input_shape_local, dropout=dropout)
-        elif embedding_level == 'character':
-            pass
+        return word_cnn(dropout=dropout)
     if model_local == 'DENSENET':
-        return densenet(input_shape_local)
+        return densenet()
     if model_local == 'LSTM':
-        return lstm(input_shape_local)
+        return lstm()
     else:
         raise ValueError("Model key not found {}".format(embedding_level))
 
 
-def fetch_model_parameters(args_local, input_shape_local):
-    model_local = fetch_model(model_local=args_local.model,
-                              embedding_level=args_local.embedding_level,
-                              input_shape_local=input_shape_local,
-                              dropout=args_local.dropout)
-
-    criterion_local = torch.nn.CrossEntropyLoss()
-    optimizer_local = torch.optim.Adam(model_local.parameters(), weight_decay=1e-4)
-    # optimizer_local = torch.optim.Adam(model_local.parameters(), weight_decay=1e-4, lr=1e-3)
-    scheduler_local = optim.lr_scheduler.CosineAnnealingLR(optimizer_local, T_max=args_local.num_epochs, eta_min=1e-4)
-    return model_local, criterion_local, optimizer_local, scheduler_local
+def fetch_model_parameters(args_local):
+    return fetch_model(model_local=args_local.model,
+                       embedding_level=args_local.embedding_level,
+                       dropout=args_local.dropout)
 
 
 def generate_device(seed):
@@ -132,10 +117,16 @@ def generate_device(seed):
 if __name__ == "__main__":
     args = get_args()
     device = generate_device(args.seed)
-    data = extract_data(args.embedding_key, args.embedding_level, args.seed, args.experiment_flag)
-    train_data, valid_data, test_data = wrap_data(args.batch_size, args.seed, **data)
-    input_shape = tuple([args.batch_size] + list(np.array(data['x_train']).shape)[1:])
-    model, criterion, optimizer, scheduler = fetch_model_parameters(args, input_shape)
+    data_provider, (data, data_map) = extract_data(args.embedding_key, args.embedding_level, args.seed, args.experiment_flag)
+
+    print("Wrapping data")
+    train_set, valid_set, test_set = wrap_data(args.batch_size, args.seed, data)
+
+    # create model
+    sample_key = data['x_train'][0]
+    input_shape = tuple([args.batch_size] + list(np.array(data_map[sample_key]['embedded_tweet']).shape))
+    print("Fetching model with input shape {}".format(input_shape))
+    model = fetch_model_parameters(args)
 
     # OUTPUT
     folder_title = '_'.join([args.model, args.name, args.embedding_key, args.embedding_level])
@@ -147,22 +138,22 @@ if __name__ == "__main__":
         'seed': args.seed,
         'experiment_name': folder_title,
         'results_dir': results_dir,
-        'criterion': criterion,
-        'scheduler': scheduler,
         'num_epochs': args.num_epochs,
-        'optimizer': optimizer,
         'batch_size': args.batch_size,
         'dropout': args.dropout,
+        'input_shape': input_shape,
     }
 
     experiment = ExperimentBuilder(
         network_model=model,
         device=device,
         hyper_params=hyper_params,
-        train_data=train_data,
-        valid_data=valid_data,
-        test_data=test_data,
-        scheduler=scheduler,
+        train_data=train_set,
+        valid_data=valid_set,
+        test_data=test_set,
+        data_map=data_map,
+        experiment_flag=args.experiment_flag,
+        data_provider=data_provider,
     )
 
     experiment_metrics, test_metrics = experiment.run_experiment()  # run experiment and return experiment metrics
