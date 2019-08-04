@@ -59,8 +59,11 @@ Topic Modeling
 3. Run `python synthesize_results.py` to aggregate all experiments in global `experiments.csv` spreadsheet. 
 
 
-![](figures/cm.png)
-Hyperparameter tuning
+### Hyperparameter tuning
 ![](figures/chart.png)
-Final Results on Tuned Model
+
+###Confusion Matrix of Results
+![](figures/cm.png)
+
+### Final Results on Tuned Model
 ![](figures/results.png)
