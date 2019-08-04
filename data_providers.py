@@ -73,14 +73,14 @@ class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
 
 
 class TextDataProvider(object):
-    def __init__(self, path_data, path_labels, experiment_flag, embedding_key):
+    def __init__(self, path_data, path_labels, experiment_flag, embedding_key, seed):
         self.experiment_flag = experiment_flag
 
         # create ouputs with tweet data
         label_data = pd.read_csv(path_labels, header='infer', index_col=0, squeeze=True).to_dict()
         data = np.load(os.path.join(ROOT_DIR, path_data), allow_pickle=True)
         data = data[()]
-        self.outputs, self.labels = extract_tweets(label_data, data, self.experiment_flag)
+        self.outputs, self.labels = extract_tweets(label_data, data, self.experiment_flag, seed)
         self.embedding_key = embedding_key
 
         # populate outputs with specific embeddings
@@ -157,10 +157,6 @@ class TextDataProvider(object):
         return embed
 
     def generate_twitter_embeddings(self):
-        # if self.experiment_flag == 4:
-        #     user_lda_scores = np.load(os.path.join(ROOT_DIR, 'data/user_lda_scores_final.npz'))
-        #     user_lda_scores = user_lda_scores['a'][()]
-        #     print("Length of lda scores {}".format(len(user_lda_scores)))
         for j, (key, output) in enumerate(self.outputs.items()):
 
             # process first tweet
@@ -181,13 +177,16 @@ class TextDataProvider(object):
                 assert len(embedded_context_tweet) == TWEET_SENTENCE_SIZE
                 self.outputs[key]['embedded_context_tweet'] = embedded_context_tweet
 
-            elif self.experiment_flag == 5:
+            elif self.experiment_flag == 4:
+                self.outputs[key]['embedded_topic_words']
+
+            elif self.experiment_flag == 5: # bootstrapping user timelines
                 if j % 1000 == 0:
                     print("Processing tweet {}/{}".format(j, len(self.outputs)))
                 user_timeline = self.outputs[key]['user_timeline']
                 user_timeline_processed = [self.process_tweet(tweet, self.embed_dim, self.word_vectors)
                                            for tweet in user_timeline]
-                output[key]['embedded_user_timeline'] = user_timeline_processed
+                self.outputs[key]['embedded_user_timeline'] = user_timeline_processed
 
     def generate_tdidf_embeddings(self, seed):
         x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(list(self.outputs.keys()), self.labels, seed)
@@ -197,31 +196,28 @@ class TextDataProvider(object):
             if i == 0:
                 self.vectorizer.fit([self.outputs[key]['tweet'] for key in _set])
 
+            # all embeddings for the set
             embedded_tweets = self.vectorizer.transform([self.outputs[key]['tweet'] for key in _set]).todense()
-            embedded_context_tweets = self.vectorizer.transform(
-                [self.outputs[key]['context_tweet'] if self.outputs[key]['context_tweet'] is not None else '' for key in
-                 _set]).todense()
-            embedded_topics = self.vectorizer.transform(
-                [' '.join(self.outputs[key]['user_topic_tokens']) for key in _set]).todense()
+            if self.experiment_flag == 2 or self.experiment_flag == 3:
+                embedded_context_tweets = self.vectorizer.transform(
+                     [self.outputs[key]['context_tweet'] if self.outputs[key]['context_tweet'] is not None else '' for key in
+                      _set]).todense()
 
-            perplexity_mean = np.mean([self.outputs[key]['perplexity'] for key in _set])
-            cohesion_mean = np.mean([self.outputs[key]['cohesion'] for key in _set])
-            features = np.array([[perplexity_mean, cohesion_mean] for _ in range(len(_set))])
-            embedded_topics = np.concatenate((np.array(embedded_topics), features), -1)
+            if self.experiment_flag == 4:
+                embedded_topics = self.vectorizer.transform(
+                    [' '.join(self.outputs[key]['topic_words']) for key in _set]).todense()
+                perplexity_mean = np.mean([self.outputs[key]['perplexity'] for key in _set])
+                coherence_mean = np.mean([self.outputs[key]['coherence'] for key in _set])
+                features = np.array([[perplexity_mean, coherence_mean] for _ in range(len(_set))])
+                embedded_topics = np.concatenate((np.array(embedded_topics), features), -1)
+                print(embedded_topics.shape)
 
-            # if self.experiment_flag == 5:
-            #     pass
-            #     # embedded_timeline_tweets = []
-            #     # for i in range(200):
-                #     for key in _set:
-                #     self.outputs[key]['embedded_tweet_user_timeline_{}'.format(i)] = vectorizer.transform(
-                #         [self.outputs[key]['user_timeline_tokens_{}'].format(i) for key in _set
-                #          if 'user_timeline_tokens_{}'.format(i) in self.outputs[key]]).todense())
-
-            for i, key in enumerate(_set):
-                self.outputs[key]['embedded_tweet'] = np.array(embedded_tweets[i])
-                self.outputs[key]['embedded_context_tweet'] = np.array(embedded_context_tweets[i])
-                self.outputs[key]['embedded_topic_words'] = np.array(embedded_topics[i])
+            for j, key in enumerate(_set):
+                self.outputs[key]['embedded_tweet'] = np.array(embedded_tweets[j])
+                if self.experiment_flag == 2 or self.experiment_flag == 3:
+                    self.outputs[key]['embedded_context_tweet'] = np.array(embedded_context_tweets[j])
+                if self.experiment_flag == 4:
+                    self.outputs[key]['embedded_topic_words'] = np.array(embedded_topics[j])
 
         return {'x_train': x_train,
                 'y_train': y_train,
@@ -257,10 +253,10 @@ class TextDataProvider(object):
                     else:
                         embedded_context_tweet = self.bert_embeddings[reply_status_id]
                     self.outputs[key]['embedded_context_tweet'] = embedded_context_tweet
+
                 if self.experiment_flag == 4:
-                    if output['user_id'] in bert_embedded_topic_words:
-                        embedded_topic_words = bert_embedded_topic_words[output['user_id']]
-                        print(embedded_topic_words.shape)
+                    if int(output['id']) in bert_embedded_topic_words:
+                        embedded_topic_words = bert_embedded_topic_words[int(output['id'])]
                         self.outputs[key]['embedded_topic_words'] = embedded_topic_words
                     else:
                         self.outputs[key]['embedded_topic_words'] = np.zeros((10, BERT_EMBED_DIM + 2))

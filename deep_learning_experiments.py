@@ -1,7 +1,9 @@
 """
 Runs baseline experiments
 """
-from comet_ml import Experiment # necessary for comet to function
+import sys
+
+from comet_ml import Experiment, Optimizer  # necessary for comet to function
 import argparse
 import configparser
 import torch
@@ -33,12 +35,13 @@ def get_args():
     parser.add_argument('--seed', type=int, default=28)
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--model', type=str, default='CNN')
-    parser.add_argument('--name', type=str, default='CNN_Experiment')
-    parser.add_argument('--embedding_key', type=str, default='NA')
-    parser.add_argument('--embedding_level', type=str, default='NA')
+    parser.add_argument('--name', type=str, default='tuning')
+    parser.add_argument('--embedding_key', type=str, default='bert')
+    parser.add_argument('--embedding_level', type=str, default='word')
     parser.add_argument('--batch_size', type=int, default=2048)
     parser.add_argument('--dropout', type=float, default=.5)
-    parser.add_argument('--experiment_flag', type=int, default=1)
+    parser.add_argument('--experiment_flag', type=int, default=4)
+    parser.add_argument('--num_layers', type=int, default=3)
 
     if VERBOSE:
         arg_str = [(str(key), str(value)) for (key, value) in vars(parser.parse_args()).items()]
@@ -49,7 +52,7 @@ def get_args():
 def extract_data(embedding_key, embedding_level, seed, experiment_flag):
     path_data = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_DATA'])
     path_labels = os.path.join(ROOT_DIR, config['DEFAULT']['PATH_LABELS'])
-    data_provider = TextDataProvider(path_data, path_labels, experiment_flag, embedding_key)
+    data_provider = TextDataProvider(path_data, path_labels, experiment_flag, embedding_key, seed)
 
     if embedding_level == 'word':
         return data_provider, data_provider.generate_word_level_embeddings(seed)
@@ -79,23 +82,17 @@ def wrap_data(batch_size, seed, data_local):
     return train_data_local, valid_data_local, test_data_local
 
 
-def fetch_model(model_local, embedding_level, dropout):
+def fetch_model(model_local, embedding_level, dropout, num_layers, num_filters):
     if model_local == 'MLP':
         return multi_layer_perceptron()
     if model_local == 'CNN':
-        return word_cnn(dropout=dropout)
+        return word_cnn(dropout=dropout, num_layers=num_layers, num_filters=num_filters)
     if model_local == 'DENSENET':
         return densenet()
     if model_local == 'LSTM':
         return lstm()
     else:
         raise ValueError("Model key not found {}".format(embedding_level))
-
-
-def fetch_model_parameters(args_local):
-    return fetch_model(model_local=args_local.model,
-                       embedding_level=args_local.embedding_level,
-                       dropout=args_local.dropout)
 
 
 def generate_device(seed):
@@ -115,33 +112,70 @@ def generate_device(seed):
 
 
 if __name__ == "__main__":
+
     args = get_args()
-    device = generate_device(args.seed)
-    data_provider, (data, data_map) = extract_data(args.embedding_key, args.embedding_level, args.seed, args.experiment_flag)
+    args = {
+        'seed': args.seed,
+        'embedding_key': 'bert',
+        'batch_size': args.batch_size,
+        'experiment_flag': args.experiment_flag,
+        'embedding_level': 'word',
+        'dropout': args.dropout,
+        'num_epochs': args.num_epochs,
+        'model': 'CNN',
+        'num_layers': args.num_layers,
+        'name': args.name,
+        'num_filters': 32,
+        'learning_rate': .1,
+    }
 
+    device = generate_device(args['seed'])
+    data_provider, (data, data_map) = extract_data(args['embedding_key'], args['embedding_level'], args['seed'], args['experiment_flag'])
+    #
+    # optimizer = Optimizer(sys.argv[1], api_key=config['DEFAULT']['COMET_API_KEY'],
+    #                       project_name="cnn-phase-4-bert-word")
+
+    # self.experiment = OfflineExperiment(project_name=self.experiment_folder.split('/')[-1],
+    #                                     workspace="ashemag",
+    #                                     offline_directory="{}/{}".format(self.experiment_folder, 'comet'))
+    # self.experiment.set_filename(experiment_name)
+    # self.experiment.set_name(experiment_name)
+    # self.experiment.log_parameters(hyper_params)
+    #        experiment_name =
     print("Wrapping data")
-    train_set, valid_set, test_set = wrap_data(args.batch_size, args.seed, data)
+    train_set, valid_set, test_set = wrap_data(args['batch_size'], args['seed'], data)
 
-    # create model
-    sample_key = data['x_train'][0]
-    input_shape = tuple([args.batch_size] + list(np.array(data_map[sample_key]['embedded_tweet']).shape))
-    print("Fetching model with input shape {}".format(input_shape))
-    model = fetch_model_parameters(args)
+    # for comet_experiment in optimizer.get_experiments():
+    # args["dropout"] = comet_experiment.get_parameter("dropout")
+    # args["num_layers"] = comet_experiment.get_parameter("num_layers")
+    # args["num_filters"] = comet_experiment.get_parameter("num_filters")
+    # args["learning_rate"] = comet_experiment.get_parameter("learning_rate")
+    args["dropout"] = 0.8877463061848953
+    args["num_layers"] = 1
+    args["num_filters"] = 47
+    args["learning_rate"] = 0.019676483888899934
+    print(args)
+    model = fetch_model(model_local=args['model'],
+                        embedding_level=args['embedding_level'],
+                        dropout=args['dropout'],
+                        num_layers=args['num_layers'],
+                        num_filters=args['num_filters']
+                        )
 
     # OUTPUT
-    folder_title = '_'.join([args.model, args.name, args.embedding_key, args.embedding_level])
+    folder_title = '_'.join([args['model'], args['name'], args['embedding_key'], args['embedding_level']])
     print("=== Writing to folder {} ===".format(folder_title))
     results_dir = os.path.join(ROOT_DIR, 'results/{}').format(folder_title)
     start = time.time()
 
     hyper_params = {
-        'seed': args.seed,
+        'seed': args['seed'],
         'experiment_name': folder_title,
         'results_dir': results_dir,
-        'num_epochs': args.num_epochs,
-        'batch_size': args.batch_size,
-        'dropout': args.dropout,
-        'input_shape': input_shape,
+        'num_epochs': args['num_epochs'],
+        'batch_size': args['batch_size'],
+        'dropout': args['dropout'],
+        'learning_rate': args['learning_rate'],
     }
 
     experiment = ExperimentBuilder(
@@ -152,8 +186,9 @@ if __name__ == "__main__":
         valid_data=valid_set,
         test_data=test_set,
         data_map=data_map,
-        experiment_flag=args.experiment_flag,
+        experiment_flag=args['experiment_flag'],
         data_provider=data_provider,
+        experiment= Experiment(project_name='experiment_{}'.format(hyper_params['seed'])),
     )
 
     experiment_metrics, test_metrics = experiment.run_experiment()  # run experiment and return experiment metrics

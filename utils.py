@@ -2,6 +2,8 @@
 Helpers for tweet extraction/processing
 """
 import csv
+import time
+
 import gensim
 import os
 from collections import Counter
@@ -56,7 +58,7 @@ def generate_random_embedding(embed_dim):
     return np.random.normal(scale=0.6, size=(embed_dim,))
 
 
-def extract_tweets(label_data, data, experiment_flag):
+def extract_tweets(label_data, data, experiment_flag, seed):
     print("=== Processing tweet data maps from JSON ===")
     labels = []
     labels_map = {'hateful': 0, 'abusive': 1, 'normal': 2, 'spam': 3}
@@ -64,10 +66,16 @@ def extract_tweets(label_data, data, experiment_flag):
     outputs = {}
     replies = np.load(os.path.join(ROOT_DIR, 'data/reply_data.npy'), allow_pickle=True)
     replies = replies[()]
-    user_lda_scores = np.load(os.path.join(ROOT_DIR, 'data/user_lda_scores_final.npz'), allow_pickle=True)['a'][()]
-    if experiment_flag == 5:
-        user_timelines = aggregate(1, 18, 'timeline/user_timeline_processed')
-        print("User timeline data s length {}".format(len(user_timelines)))
+
+    # if experiment_flag == 4:
+    #     user_lda_scores = np.load(os.path.join(ROOT_DIR, 'data/user_lda_scores_final.npz'), allow_pickle=True)['a'][()]
+    #     print("User lda scores length {}".format(len(user_lda_scores)))
+
+    # if experiment_flag == 5 or experiment_flag == 4:
+    #     end = 18
+    #     user_timelines = aggregate(1, 18, 'timeline/user_timeline_processed')
+    #     print("User timeline data length {}".format(len(user_timelines)))
+
     for j, (key, value) in enumerate(data.items()):
 
         if int(value['id_str']) not in label_data:
@@ -87,19 +95,22 @@ def extract_tweets(label_data, data, experiment_flag):
         output['favorite_count'] = 0 if value['favorite_count'] == 0 else np.log(value['favorite_count'])
         output['label_string'] = label_data[int(value['id_str'])]
 
-        if output['user_id'] in user_lda_scores:
-            perplexity, cohesion, topic_words = user_lda_scores[output['user_id']]
-            topic_words = [word for (word, _) in topic_words]
-            if len(topic_words) < 10:
-                for _ in range(10 - len(topic_words)):
-                    topic_words.append(' ')
-            output['user_topic_tokens'] = topic_words
-            output['perplexity'] = perplexity
-            output['cohesion'] = cohesion
-        else:
-            output['user_topic_tokens'] = [' '] * 10
-            output['perplexity'] = 0
-            output['cohesion'] = 0
+        # if j % 10 == 0:
+        #     print("on utils Bert embedding {}".format(j))
+        # if output['user_id'] in user_lda_scores:
+        #     perplexity, cohesion, topic_words = user_lda_scores[output['user_id']]
+        #     topic_words = [word for (word, _) in topic_words]
+        #     print(topic_words)
+        #     if len(topic_words) < 10:
+        #         padding = [' '] * 10 - len(topic_words)
+        #         topic_words.extend(padding)
+        #     output['user_topic_tokens'] = topic_words
+        #     output['perplexity'] = perplexity
+        #     output['cohesion'] = cohesion
+        # else:
+        #     output['user_topic_tokens'] = [' '] * 10
+        #     output['perplexity'] = 0
+        #     output['cohesion'] = 0
 
         # add context tweet
         status_id = str(output['in_reply_to_status_id'])
@@ -115,13 +126,30 @@ def extract_tweets(label_data, data, experiment_flag):
             output['context_tokens'] = output['context_tweet'].translate(
                 str.maketrans('', '', string.punctuation)).lower() if output['context_tweet'] else None
             output['context_tokens'] = output['context_tokens'].split() if output['context_tokens'] else None
+        # if experiment_flag == 4:
+        #     if output['user_id'] in user_timelines:
+        #         timeline_tweets = user_timelines[output['user_id']]
+        #         start = time.time()
+        #         nlp = spacy.load('en', disable=['parser', 'ner'])
+        #         perplexity, coherence, topic_words = get_scores(timeline_tweets, nlp, seed)
+        #         output['perplexity'] = perplexity
+        #         output['coherence'] = coherence
+        #         output['topic_words'] = topic_words
+        #     else:
+        #         output['perplexity'] = 0
+        #         output['coherence'] = 0
+        #         output['topic_words'] = [' '] * 10
 
         if experiment_flag == 5:
             if output['user_id'] in user_timelines:
                 timeline = user_timelines[output['user_id']]
                 timeline_tokens = [tweet for i, tweet in enumerate(timeline) if i < 200]
+                if len(timeline_tokens) < 200:
+                    timeline_tokens.extend([' '] * (200 - len(timeline_tokens)))
                 assert len(timeline_tokens) == 200
                 output['user_timeline'] = timeline_tokens
+            else:
+                output['user_timeline'] = [' '] * 200
 
         outputs[output['id']] = output
     return outputs, labels
@@ -184,7 +212,7 @@ def lemmatization(texts, nlp, allowed_postags=['NOUN', 'ADJ', 'VERB', 'ADV']):
 
 def get_scores(docs, nlp, seed):
     try:
-        data_lemmatized = lemmatization(docs, nlp, allowed_postags=['NOUN', 'ADJ', 'ADV'])
+        data_lemmatized = lemmatization(docs, nlp, allowed_postags=['NOUN'])
 
         # Create Dictionary
         id2word = corpora.Dictionary(data_lemmatized)

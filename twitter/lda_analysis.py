@@ -2,25 +2,15 @@ import sys
 import os
 sys.path.append("..")
 from globals import ROOT_DIR
-import configparser
 import gensim
 import gensim.corpora as corpora
-from gensim.utils import simple_preprocess
 from gensim.models import CoherenceModel
 import spacy
 import numpy as np
 from collections import Counter
+from bert_embedding import BertEmbedding
+import time
 
-
-timelines = {}
-# process 2 and 3
-# 0, 1, 2, 3
-for i in [3]:
-    results = np.load(os.path.join(ROOT_DIR, 'data/user_timeline_processed_{}.npz'.format(i)), allow_pickle=True)
-    print("Downloading User Timelines, Processed {} / {}".format(i+1, 6))
-    results = results['a']
-    results = results[()]
-    timelines = {**results, **timelines}
 
 def lemmatization(texts, nlp, allowed_postags=['NOUN', 'ADJ', 'VERB', 'ADV']):
     """https://spacy.io/api/annotation"""
@@ -30,12 +20,10 @@ def lemmatization(texts, nlp, allowed_postags=['NOUN', 'ADJ', 'VERB', 'ADV']):
         texts_out.append([token.lemma_ for token in doc if token.pos_ in allowed_postags])
     return texts_out
 
-def get_scores(docs, nlp):
+
+def get_scores(docs, nlp, seed):
     try:
-        # Initialize spacy 'en' model, keeping only tagger component (for efficiency)
-        # python3 -m spacy download en
-        # Do lemmatization keeping only noun, adj, vb, adv
-        data_lemmatized = lemmatization(docs, nlp, allowed_postags=['NOUN', 'ADJ', 'ADV'])
+        data_lemmatized = lemmatization(docs, nlp, allowed_postags=['NOUN'])
 
         # Create Dictionary
         id2word = corpora.Dictionary(data_lemmatized)
@@ -45,15 +33,11 @@ def get_scores(docs, nlp):
 
         # Term Document Frequency
         corpus = [id2word.doc2bow(text) for text in texts]
-        lda_model = gensim.models.ldamodel.LdaModel(corpus=corpus,
-                                                    id2word=id2word,
-                                                    num_topics=5,
-                                                    random_state=100,
-                                                    update_every=1,
-                                                    chunksize=1000,
-                                                    passes=1,
-                                                    alpha='auto',
-                                                    per_word_topics=True)
+        lda_model = gensim.models.ldamulticore.LdaMulticore(corpus=corpus,
+                                                            id2word=id2word,
+                                                            num_topics=20,
+                                                            random_state=seed,
+                                                            passes=2)
         # # Print the Keyword in the 10 topics
         dominant_keywords = []
         for i, row_list in enumerate(lda_model[corpus]):
@@ -64,47 +48,87 @@ def get_scores(docs, nlp):
                 if j == 0:  # => dominant topic
                     wp = lda_model.show_topic(topic_num)
                     dominant_keywords.extend([word for word, prop in wp])
-                    # topic_keywords = ", ".join([word for word, prop in wp])
                 else:
                     break
-
         topic_words = Counter([keyword for keyword in dominant_keywords if keyword not in ['-PRON-']]).most_common(10)
-
-
-        # len(doc_lda)
-        # Compute Perplexity
-        # print('Perplexity: ', lda_model.log_perplexity(corpus))  # a measure of how good the model is. lower the better.
 
         # Compute Coherence Score
         coherence_model_lda = CoherenceModel(model=lda_model, texts=data_lemmatized, dictionary=id2word, coherence='c_v')
         coherence_lda = coherence_model_lda.get_coherence()
-        # print('Coherence Score: ', coherence_lda)
-        # In my experience, topic coherence score, in particular, has been more helpful.
-        #vis = pyLDAvis.gensim.prepare(lda_model, corpus, id2word)
-
         return lda_model.log_perplexity(corpus), coherence_lda, [word for (word, count) in topic_words]
     except:
         return None, None, None
 
-nlp = spacy.load('en', disable=['parser', 'ner'])
-user_scores = {}
-save_count = 20
-import time
+
+def bert_embed_words(words, bert_embedding):
+    result = []
+    items = bert_embedding(words)
+    for item in items:
+        try:
+            result.append(item[1][0])
+        except:
+            result.append(np.zeros((768,)))
+    return result
+
+
+def aggregate(start, end, file_names):
+    aggregate_data = {}
+    for i in range(start, end):
+        path_name = os.path.join(ROOT_DIR, 'data/{}_{}.npz'.format(file_names, i))
+        results = np.load(path_name, allow_pickle=True)
+        print("Downloading {}, Processed {} / {}".format(path_name, i, end - start))
+        results = results['a']
+        results = results[()]
+        aggregate_data = {**results, **aggregate_data}
+    return aggregate_data
+
+
+def add_scores(embeds, word_count, scores):
+    features = np.array([scores for _ in range(word_count)])  # adding 1
+    embed = np.concatenate((embeds, features), -1)
+    return embed
+
+
 start = time.time()
+timelines = aggregate(1, 18, 'timeline/user_timeline_processed')
+print(len(timelines))
+user_scores = {}
+bert_topic_words = {}
+
+nlp = spacy.load('en', disable=['parser', 'ner'])
+bert_embedding = BertEmbedding()
+
+print("Beginning LDA Analysis for both bert & lda")
+save_count = 0
 for i, (key, value) in enumerate(timelines.items()):
     if i % 100 == 0:
         print("{}) {} min".format(i, (time.time() - start)/60))
 
     value = value[:200]
-    doc = [tweet for tweet in value]
+    doc = value
     if len(doc) == 0:
-        continue
-    perplexity, coherence, topic_words = get_scores(doc, nlp)
+        perplexity = 0
+        coherence = 0
+        topic_words = [' '] * 10
+    else:
+        perplexity, coherence, topic_words = get_scores(doc, nlp, 28)
+
     if perplexity is None:
-        continue
+        perplexity = 0
+        coherence = 0
+        topic_words = [' '] * 10
+
     user_scores[key] = [perplexity, coherence, topic_words]
+    bert_embed = bert_embed_words(topic_words, bert_embedding)
+    bert_embed_processed = add_scores(bert_embed, 10, [perplexity, coherence])
+    bert_topic_words[key] = bert_embed_processed
 
     if i % 1000 == 0 and i != 0:
-        np.savez(os.path.join(ROOT_DIR, 'data/user_lda_scores_{}.npz'.format(save_count)), a=user_scores)
+        np.savez(os.path.join(ROOT_DIR, 'data/lda/user_lda_scores_{}.npz'.format(save_count)), a=user_scores)
+        np.savez(os.path.join(ROOT_DIR, 'data/bert/bert_topics_{}.npz'.format(save_count)), a=bert_topic_words)
         save_count += 1
         user_scores = {}
+        bert_topic_words = {}
+
+np.savez(os.path.join(ROOT_DIR, 'data/lda/user_lda_scores_{}.npz'.format(save_count)), a=user_scores)
+np.savez(os.path.join(ROOT_DIR, 'data/bert/bert_topics_{}.npz'.format(save_count)), a=bert_topic_words)

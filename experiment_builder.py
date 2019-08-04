@@ -11,21 +11,26 @@ from torch import optim
 import torch.nn.functional as F
 import spacy
 from utils import *
+import configparser
 
 LABEL_MAPPING = {0: 'hateful', 1: 'abusive', 2: 'normal', 3: 'spam'}
 DEBUG = False
+
+config = configparser.ConfigParser()
+config.read(os.path.join(ROOT_DIR, 'config.ini'))
 
 
 class ExperimentBuilder(nn.Module):
     def __init__(self, network_model, device, hyper_params, data_map,
                  train_data, valid_data, test_data, experiment_flag,
-                 data_provider):
+                 data_provider, experiment):
         """
         Initializes an ExperimentBuilder object. Such an object takes care of running training and evaluation of a deep net
         on a given dataset. It also takes care of saving per epoch models and automatically inferring the best val model
         to be used for evaluating the test set metrics.
         """
         super(ExperimentBuilder, self).__init__()
+        self.experiment = experiment # comet experiment
         self.experiment_flag = experiment_flag
         self.experiment_name = hyper_params['experiment_name']
         self.model = network_model
@@ -46,18 +51,18 @@ class ExperimentBuilder(nn.Module):
         self.valid_data = []
         self.test_data = []
 
+        self.train_data_tweets = None
+        self.valid_data_tweets = None
+        self.test_data_tweets = None
+
+        self.confusion_matrix = torch.zeros(4, 4)  # number of classes
+
         # build extra layer of model
-        input_shape = hyper_params['input_shape']
         self.preprocess_data()
         self.criterion = nn.CrossEntropyLoss().to(self.device)  # send the loss computation to the GPU
-        self.optimizer = torch.optim.Adam(self.model.parameters(), weight_decay=1e-4)
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.num_epochs, eta_min=1e-4)
-
-        if torch.cuda.device_count() > 1:
-            self.model.to(self.device)
-            self.model = nn.DataParallel(module=self.model)
-        else:
-            self.model.to(self.device)  # sends the model from the cpu to the gpu
+        self.optimizer = torch.optim.Adam(self.model.parameters(), weight_decay=1e-4, lr=hyper_params["learning_rate"])
+        # self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.num_epochs, eta_min=1e-4)
+        self.scheduler = None
 
         # Generate the directory names
         self.experiment_folder = hyper_params['results_dir']
@@ -72,15 +77,6 @@ class ExperimentBuilder(nn.Module):
 
         if not os.path.exists(self.experiment_saved_models):
             os.makedirs(self.experiment_saved_models)  # create the experiment saved models directory
-
-        # Comet visualizations
-        if not DEBUG:
-            self.experiment = OfflineExperiment(project_name=self.experiment_folder.split('/')[-1],
-                                           workspace="ashemag",
-                                           offline_directory="{}/{}".format(self.experiment_folder, 'comet'))
-            self.experiment.set_filename('experiment_{}'.format(hyper_params['seed']))
-            self.experiment.set_name('experiment_{}'.format(hyper_params['seed']))
-            self.experiment.log_parameters(hyper_params)
 
     def get_num_parameters(self):
         total_num_params = 0
@@ -108,7 +104,6 @@ class ExperimentBuilder(nn.Module):
             tweet_out = self.model.forward(tweet_input, layer_key='tweet', flatten_flag=True)
 
             feature_out = np.sum([self.model.forward(item.to(self.device), layer_key='user-timeline').cpu() for item in feature_input])
-            print(feature_out.shape)
             out = torch.cat((tweet_out.cpu(), feature_out.cpu()), 1).to(self.device)
             return self.model.layer_dict['fc_layer'](out)
 
@@ -156,11 +151,16 @@ class ExperimentBuilder(nn.Module):
         loss = self.criterion(out, y)
 
         _, predicted = torch.max(out.data, 1)  # get argmax of predictions
+
         accuracy = np.mean(list(predicted.eq(y.data).cpu()))
+        if experiment_key == 'test':
+            for t, p in zip(y.data.view(-1), predicted.cpu().view(-1)):
+                self.confusion_matrix[t.long(), p.long()] += 1
 
         stats['{}_acc'.format(experiment_key)].append(accuracy)  # compute accuracy
         stats['{}_loss'.format(experiment_key)].append(loss.data.detach().cpu().numpy())
         self.compute_f_metrics(stats, y, predicted, experiment_key)
+        return predicted
 
     def save_model(self, model_save_dir, model_save_name, model_idx):
         """
@@ -272,22 +272,22 @@ class ExperimentBuilder(nn.Module):
 
         for _id in sample_ids:
             embedded_tweet = self.data_map[_id]['embedded_tweet']
+
             if self.experiment_flag == 2:
                 # concatenates retweet/favorite to tweet
                 retweet_count, favorite_count = self.data_map[_id]['retweet_count'], self.data_map[_id]['favorite_count']
-                features = torch.Tensor([[retweet_count, favorite_count] for _ in range(embedded_tweet.shape[0])])
+                features = torch.Tensor([[retweet_count, favorite_count] for _ in range(np.array(embedded_tweet).shape[0])])
                 embedded_tweet = np.concatenate((embedded_tweet, features), -1)
                 # adds context tweet
-                embedded_context_tweets.append(torch.Tensor(self.data_map[_id]['embedded_context_tweet']))
+                embedded_context_tweets.append(self.data_map[_id]['embedded_context_tweet'])
             if self.experiment_flag == 3:
                 # concatenates retweet/favorite to tweet
                 retweet_count, favorite_count = self.data_map[_id]['retweet_count'], self.data_map[_id]['favorite_count']
-                features = torch.Tensor([[retweet_count, favorite_count] for _ in range(embedded_tweet.shape[0])])
+                features = torch.Tensor([[retweet_count, favorite_count] for _ in range(np.array(embedded_tweet).shape[0])])
                 embedded_tweet = np.concatenate((embedded_tweet, features), -1)
-            # if self.experiment_flag == 4:
-            #     # create topic words
-            #     # get all tweets tweets in this batch
-            #     embedded_topic_words.append(embedded_topic_words)
+            if self.experiment_flag == 4:
+                embedded_topic_words.append(self.data_map[_id]['embedded_topic_words'])
+
             if self.experiment_flag == 5:
                 embedded_timeline_list = [torch.Tensor(tweet).float()
                                           for tweet in self.data_map[_id]['embedded_user_timeline']]
@@ -297,12 +297,7 @@ class ExperimentBuilder(nn.Module):
 
         # get all tweets as corpus and do LDA from that
         if self.experiment_flag == 4:
-            nlp = spacy.load('en', disable=['parser', 'ner'])
-            tweets = [self.data_map[_id]['tokens'] for _id in sample_ids]
-            perplexity, coherence, topic_words = get_scores(tweets, nlp, self.seed)
-            embedded_topic_words = self.data_provider.embed_words(topic_words, [perplexity, coherence])
-            return torch.Tensor(embedded_tweets).float(), \
-                   torch.Tensor([embedded_topic_words for _ in range(len(sample_ids))]).float()
+            return torch.Tensor(embedded_tweets).float(), torch.Tensor(embedded_topic_words).float()
 
         if self.experiment_flag == 2:
             return torch.Tensor(embedded_tweets).float(), torch.Tensor(embedded_context_tweets).float()
@@ -342,18 +337,34 @@ class ExperimentBuilder(nn.Module):
 
         self.model.build_fc_layer(out.shape)
 
+        # send model to device
+        if torch.cuda.device_count() > 1:
+            self.model = nn.DataParallel(self.model).cuda()
+            self.model.to(self.device)
+            self.model = self.model.module
+        else:
+            self.model.to(self.device)  # sends the model from the cpu to the gpu
+
+    def extract_tweets(self, ids):
+        return [(self.data_map[_id]['tweet'],self.data_map[_id]['label'])  for _id in ids]
+
     def preprocess_data(self):
         print("Preprocessing train data")
         start = time.time()
         self.train_data = [(self.extract_sample_data(x), y) for x, y in self.train_data_raw]
+        self.train_data_tweets = [self.extract_tweets(x) for x, y in self.train_data_raw]
+
         self.build_model(self.train_data[0][0])
         print("Preprocessing train data finished in {:.2f} minutes".format((time.time() - start) / 60))
 
         print("Preprocessing valid data")
         self.valid_data = [(self.extract_sample_data(x), y) for x, y in self.valid_data_raw]
+        self.valid_data_tweets = [self.extract_tweets(x) for x, y in self.valid_data_raw]
 
         print("Preprocessing test data")
         self.test_data = [(self.extract_sample_data(x), y) for x, y in self.test_data_raw]
+        self.test_data_tweets = [self.extract_tweets(x) for x, y in self.test_data_raw]
+
 
     def run_experiment(self):
         """
@@ -420,14 +431,21 @@ class ExperimentBuilder(nn.Module):
 
         test_stats = defaultdict(list)
         with tqdm.tqdm(total=len(self.test_data)) as pbar_test:  # ini a progress bar
-            for x, y in self.test_data:  # sample batch
-                self.run_evaluation_iter(x=x, y=y, stats=test_stats, experiment_key='test')
+            for i, (x, y) in enumerate(self.test_data):  # sample batch
+                preds = self.run_evaluation_iter(x=x, y=y, stats=test_stats, experiment_key='test')
                 pbar_test.update(1)  # update progress bar status
                 pbar_test.set_description("loss: {:.4f}, accuracy: {:.4f}".format(np.mean(test_stats['test_loss']),
                                                                                   np.mean(test_stats['test_acc'])))
+                for j, pred in enumerate(preds):
+                    print("Pred: {} Label: {}\n{}\n".format(pred,
+                                                            self.test_data_tweets[i][j][1],
+                                                            self.test_data_tweets[i][j][0]))
+        print(self.confusion_matrix)
         # save to test stats
         for key, value in test_stats.items():
             test_stats[key] = np.mean(value)
+            if not DEBUG:
+                self.experiment.log_metric(name=key, value=test_stats[key])
 
         merge_dict = dict(list(test_stats.items()) +
                           list(train_stats["epoch_{}".format(self.best_val_model_idx)].items()))

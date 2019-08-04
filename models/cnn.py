@@ -70,7 +70,7 @@ class CNN(nn.Module):
             self.layer_dict['conv_{}_{}'.format(i, layer_key)] = nn.Conv1d(in_channels=out.shape[1],
                                                              # add a conv layer in the module dict
                                                              kernel_size=3,
-                                                             out_channels=self.num_filters[i],
+                                                             out_channels=self.num_filters,
                                                              padding=dilation,
                                                              bias=False,
                                                              dilation=dilation)
@@ -131,10 +131,10 @@ class CNN(nn.Module):
                 pass
 
 
-def word_cnn(dropout=.5):
+def word_cnn(num_layers, num_filters, dropout=.5):
     return CNN(num_output_classes=4,
-               num_filters=[8, 8, 8],
-               num_layers=3,
+               num_filters=num_filters,
+               num_layers=num_layers,
                dropout=dropout)
 
 

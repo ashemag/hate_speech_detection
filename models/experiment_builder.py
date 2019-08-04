@@ -34,8 +34,8 @@ class ExperimentBuilder(nn.Module):
         self.device = device
 
         if torch.cuda.device_count() > 1:
-            self.model.to(self.device)
             self.model = nn.DataParallel(module=self.model)
+            self.model.to(self.device)
         else:
             self.model.to(self.device)  # sends the model from the cpu to the gpu
           # re-initialize network parameters
