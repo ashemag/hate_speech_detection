@@ -1,6 +1,6 @@
 """
 Script for converting experiments.csv
-to latex table for dissertation
+to latex table for dissertation paper
 """
 
 from globals import ROOT_DIR

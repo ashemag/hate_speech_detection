@@ -1,15 +1,11 @@
-from comet_ml import OfflineExperiment
+from comet_ml import OfflineExperiment # needed at top for Comet plugin
 from collections import defaultdict, OrderedDict
 import torch
 import torch.nn as nn
 import tqdm
-import os
-import numpy as np
 import time
 from sklearn.metrics import f1_score, precision_score, recall_score
-from torch import optim
 import torch.nn.functional as F
-import spacy
 from utils import *
 import configparser
 

@@ -1,8 +1,6 @@
 """
-Runs baseline experiments
+Runs experiments and hyperparameter tuning
 """
-import sys
-
 from comet_ml import Experiment, Optimizer  # necessary for comet to function
 import argparse
 import configparser
@@ -17,11 +15,10 @@ from models.lstm import lstm
 from models.multilayer_perceptron import multi_layer_perceptron
 import time
 import numpy as np
+import sys
 
 # PARAMS
-
 VERBOSE = True
-
 config = configparser.ConfigParser()
 config.read('config.ini')
 
@@ -110,6 +107,75 @@ def generate_device(seed):
 
     return device_local
 
+def hyperparameter_tuning():
+    args = {
+        'seed': 28,
+        'embedding_key': 'bert',
+        'batch_size': 2048,
+        'experiment_flag': 4,
+        'embedding_level': 'word',
+        'dropout': .5,
+        'num_epochs': 100,
+        'model': 'CNN',
+        'num_layers': 3,
+        'name': 'tuning',
+        'num_filters': 32,
+        'learning_rate': .1,
+    }
+
+    device = generate_device(args['seed'])
+    data_provider, (data, data_map) = extract_data(args['embedding_key'], args['embedding_level'], args['seed'], args['experiment_flag'])
+
+    optimizer = Optimizer(sys.argv[1], api_key=config['DEFAULT']['COMET_API_KEY'],
+                          project_name="cnn-phase-4-bert-word")
+    print("Wrapping data")
+    train_set, valid_set, test_set = wrap_data(args['batch_size'], args['seed'], data)
+
+    for comet_experiment in optimizer.get_experiments():
+        args["dropout"] = comet_experiment.get_parameter("dropout")
+        args["num_layers"] = comet_experiment.get_parameter("num_layers")
+        args["num_filters"] = comet_experiment.get_parameter("num_filters")
+        args["learning_rate"] = comet_experiment.get_parameter("learning_rate")
+
+    model = fetch_model(model_local=args['model'],
+                        embedding_level=args['embedding_level'],
+                        dropout=args['dropout'],
+                        num_layers=args['num_layers'],
+                        num_filters=args['num_filters']
+                        )
+
+    # OUTPUT
+    folder_title = '_'.join([args['model'], args['name'], args['embedding_key'], args['embedding_level']])
+    print("=== Writing to folder {} ===".format(folder_title))
+    results_dir = os.path.join(ROOT_DIR, 'results/{}').format(folder_title)
+    start = time.time()
+
+    hyper_params = {
+        'seed': args['seed'],
+        'experiment_name': folder_title,
+        'results_dir': results_dir,
+        'num_epochs': args['num_epochs'],
+        'batch_size': args['batch_size'],
+        'dropout': args['dropout'],
+        'learning_rate': args['learning_rate'],
+    }
+
+    experiment = ExperimentBuilder(
+        network_model=model,
+        device=device,
+        hyper_params=hyper_params,
+        train_data=train_set,
+        valid_data=valid_set,
+        test_data=test_set,
+        data_map=data_map,
+        experiment_flag=args['experiment_flag'],
+        data_provider=data_provider,
+        experiment=Experiment(project_name='experiment_{}'.format(hyper_params['seed'])),
+    )
+
+    _, _ = experiment.run_experiment()  # run experiment and return experiment metrics
+    print("Total time (min): {:0.2f}".format(round((time.time() - start) / float(60), 4)))
+
 
 if __name__ == "__main__":
 
@@ -131,30 +197,16 @@ if __name__ == "__main__":
 
     device = generate_device(args['seed'])
     data_provider, (data, data_map) = extract_data(args['embedding_key'], args['embedding_level'], args['seed'], args['experiment_flag'])
-    #
-    # optimizer = Optimizer(sys.argv[1], api_key=config['DEFAULT']['COMET_API_KEY'],
-    #                       project_name="cnn-phase-4-bert-word")
 
-    # self.experiment = OfflineExperiment(project_name=self.experiment_folder.split('/')[-1],
-    #                                     workspace="ashemag",
-    #                                     offline_directory="{}/{}".format(self.experiment_folder, 'comet'))
-    # self.experiment.set_filename(experiment_name)
-    # self.experiment.set_name(experiment_name)
-    # self.experiment.log_parameters(hyper_params)
-    #        experiment_name =
     print("Wrapping data")
     train_set, valid_set, test_set = wrap_data(args['batch_size'], args['seed'], data)
 
-    # for comet_experiment in optimizer.get_experiments():
-    # args["dropout"] = comet_experiment.get_parameter("dropout")
-    # args["num_layers"] = comet_experiment.get_parameter("num_layers")
-    # args["num_filters"] = comet_experiment.get_parameter("num_filters")
-    # args["learning_rate"] = comet_experiment.get_parameter("learning_rate")
+    # TUNED VALUES
     args["dropout"] = 0.8877463061848953
     args["num_layers"] = 1
     args["num_filters"] = 47
     args["learning_rate"] = 0.019676483888899934
-    print(args)
+
     model = fetch_model(model_local=args['model'],
                         embedding_level=args['embedding_level'],
                         dropout=args['dropout'],

@@ -1,3 +1,8 @@
+"""
+Provides feature embeddings of type Bert, Twitter, and TFIDF across
+experiment types
+"""
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from gensim.models import word2vec, KeyedVectors
 import torch.utils.data as data
@@ -17,6 +22,7 @@ NUM_CLASSES = 4
 BERT_EMBEDDING_NUM = 11
 TDIDF_MAX_FEATURES = 500
 BERT_EMBED_DIM = 768
+
 
 class DataProvider(data.Dataset):
     """Generic data provider."""
@@ -157,6 +163,9 @@ class TextDataProvider(object):
         return embed
 
     def generate_twitter_embeddings(self):
+        if self.experiment_flag == 4:
+            user_topic_words = np.load(ROOT_DIR, 'data/user_lda_scores_final.npz')
+
         for j, (key, output) in enumerate(self.outputs.items()):
 
             # process first tweet
@@ -178,19 +187,14 @@ class TextDataProvider(object):
                 self.outputs[key]['embedded_context_tweet'] = embedded_context_tweet
 
             elif self.experiment_flag == 4:
-                self.outputs[key]['embedded_topic_words']
-
-            elif self.experiment_flag == 5: # bootstrapping user timelines
-                if j % 1000 == 0:
-                    print("Processing tweet {}/{}".format(j, len(self.outputs)))
-                user_timeline = self.outputs[key]['user_timeline']
-                user_timeline_processed = [self.process_tweet(tweet, self.embed_dim, self.word_vectors)
-                                           for tweet in user_timeline]
-                self.outputs[key]['embedded_user_timeline'] = user_timeline_processed
+                perplexity, coherence, topic_words = user_topic_words[self.outputs[key]['user_id']]
+                self.outputs[key]['embedded_topic_words'] = self.embed_words(topic_words, [perplexity, coherence])
 
     def generate_tdidf_embeddings(self, seed):
         x_train, y_train, x_valid, y_valid, x_test, y_test = split_data(list(self.outputs.keys()), self.labels, seed)
         self.vectorizer = TfidfVectorizer(use_idf=True, max_features=TDIDF_MAX_FEATURES)
+        if self.experiment_flag == 4:
+            user_topic_words = np.load(ROOT_DIR, 'data/user_lda_scores_final.npz')
 
         for i, _set in enumerate([x_train, x_valid, x_test]):
             if i == 0:
@@ -205,9 +209,9 @@ class TextDataProvider(object):
 
             if self.experiment_flag == 4:
                 embedded_topics = self.vectorizer.transform(
-                    [' '.join(self.outputs[key]['topic_words']) for key in _set]).todense()
-                perplexity_mean = np.mean([self.outputs[key]['perplexity'] for key in _set])
-                coherence_mean = np.mean([self.outputs[key]['coherence'] for key in _set])
+                    [' '.join(user_topic_words[self.outputs[key]['user_id']][2]) for key in _set]).todense()
+                perplexity_mean = np.mean([user_topic_words[self.outputs[key]['user_id']][0] for key in _set])
+                coherence_mean = np.mean([user_topic_words[self.outputs[key]['user_id']][1] for key in _set])
                 features = np.array([[perplexity_mean, coherence_mean] for _ in range(len(_set))])
                 embedded_topics = np.concatenate((np.array(embedded_topics), features), -1)
                 print(embedded_topics.shape)
