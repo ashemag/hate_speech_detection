@@ -26,44 +26,21 @@ Our dataset:
 ### Dataset Analytics 
 Source: [80k annotated tweets](http://www.aclweb.org/anthology/N16-2013)
 
-![ Modeling](figures/word_cloud.png)
-
-
-
-Embedding choices
+### Embedding choices
 * TF-IDF
 * Pretrained Twitter
 * Pretrained Bert
 
-Architectures 
+### Architectures 
 * Logistic Regression baseline 
 * Multilayer Perceptron 
 * CNN
 * LSTM
 * DenseNet
 
-Experiment Design	
+### Experiment Design	
 * <strong> Phase 1:</strong> Tweet Embeddings
 * <strong>Phase 2:</strong> Tweet embeddings + Reply-pairing embeddings + reply network metrics as embedding coefficients (favorite count & retweet count)
 * <strong>Phase 3:</strong> Tweet embeddings + Dominant LDA Topic words from user timeline tweets 
 
-Topic Modeling
-![ Modeling](figures/hateful.png)
-
-
-
-### Results
-
-1. Create a results directory. 
-2. All experiments are output to folders with experiment name and `results.csv` files. For example, run baseline experiments by walking through `logistic_regression.ipynb`. 
-3. Run `python synthesize_results.py` to aggregate all experiments in global `experiments.csv` spreadsheet. 
-
-
-### Hyperparameter tuning
-![](figures/chart.png)
-
-###Confusion Matrix of Results
-![](figures/cm.png)
-
-### Final Results on Tuned Model
-![](figures/results.png)
+Full paper: 
