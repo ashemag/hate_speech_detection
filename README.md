@@ -43,4 +43,4 @@ Source: [80k annotated tweets](http://www.aclweb.org/anthology/N16-2013)
 * <strong>Phase 2:</strong> Tweet embeddings + Reply-pairing embeddings + reply network metrics as embedding coefficients (favorite count & retweet count)
 * <strong>Phase 3:</strong> Tweet embeddings + Dominant LDA Topic words from user timeline tweets 
 
-Full paper: 
+Full paper: Coming Soon
