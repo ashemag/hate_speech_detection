@@ -43,4 +43,10 @@ Source: [80k annotated tweets](http://www.aclweb.org/anthology/N16-2013)
 * <strong>Phase 2:</strong> Tweet embeddings + Reply-pairing embeddings + reply network metrics as embedding coefficients (favorite count & retweet count)
 * <strong>Phase 3:</strong> Tweet embeddings + Dominant LDA Topic words from user timeline tweets 
 
+### To run
+* Use Tweepy API to collect data or email me for 64k tweets dataset + embeddings 
+* Install dependencies 
+* Configure cloud computing environment 
+* Sample run: `python deep_learning_experiments.py --num_epochs 100 --model CNN --name test --seed 28 --embedding_key twitter --embedding_level word --experiment_flag 2`
+
 Full paper: Coming Soon
