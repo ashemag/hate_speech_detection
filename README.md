@@ -49,5 +49,5 @@ Source: [80k annotated tweets](http://www.aclweb.org/anthology/N16-2013)
 * Configure cloud computing environment 
 * Sample run: `python deep_learning_experiments.py --num_epochs 100 --model CNN --name test --seed 28 --embedding_key twitter --embedding_level word --experiment_flag 2`
 
-Full paper: Coming Soon
+Full paper: Coming Soon <br/> 
 Contact: ashe.magalhaes@gmail.com
